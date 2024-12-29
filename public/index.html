@@ -12,162 +12,99 @@
     <div class="container">
         <div class="sidebar">
             <h3>Chat Sessions</h3>
-            <ul id="chatList">
-                <!-- Chat list items will be dynamically generated -->
-            </ul>
+            <ul id="chatList"></ul>
         </div>
 
         <div class="chat-area">
-            <div class="chat-header">
-                <h3 id="chatTitle">Select a Chat</h3>
-            </div>
-            <div id="chatMessages">
-                <!-- Messages will be dynamically rendered here -->
-            </div>
+            <h3 id="chatTitle">Select a Chat</h3>
+            <div id="chatMessages"></div>
             <form id="sendMessageForm" autocomplete="off">
-                <div class="form-group">
-                    <input type="text" id="phone" placeholder="Recipient's phone (e.g., +1234567890)" required>
-                </div>
-                <div class="form-group">
-                    <textarea id="message" placeholder="Type your message..." rows="2" required></textarea>
-                </div>
-                <div class="form-group file-input">
-                    <input type="file" id="media" accept="image/*,video/*">
-                    <label for="media">Attach Media</label>
-                </div>
-                <button type="submit">Send Message</button>
+                <input type="text" id="phone" placeholder="Recipient's phone (e.g., +233123456789)" required>
+                <textarea id="message" placeholder="Type your message..." rows="2"></textarea>
+                <button type="submit">Send</button>
             </form>
         </div>
     </div>
 
     <script>
-        const DEFAULT_COUNTRY_CODE = '+233'; // Default country code for Ghana
-        let currentPhoneNumber = null; // To track the active chat phone number
+        let currentPhoneNumber = null;
 
-        // Format phone number to include default country code if missing
-        function formatPhoneNumber(phone) {
-            let normalizedPhone = phone.trim();
-
-            if (normalizedPhone.startsWith('+')) {
-                return normalizedPhone; // Already formatted
-            }
-
-            if (normalizedPhone.startsWith('0')) {
-                normalizedPhone = DEFAULT_COUNTRY_CODE + normalizedPhone.substring(1);
-            } else if (!normalizedPhone.startsWith(DEFAULT_COUNTRY_CODE)) {
-                normalizedPhone = DEFAULT_COUNTRY_CODE + normalizedPhone;
-            }
-
-            return normalizedPhone;
-        }
-
-        // Fetch chats and populate the sidebar
+        // Fetch and display chat sessions
         async function fetchChats() {
             try {
                 const response = await fetch('/api/chats');
-                const data = await response.json();
+                const chats = await response.json();
+                const chatList = document.getElementById('chatList');
+                chatList.innerHTML = '';
 
-                if (data) {
-                    const chatList = document.getElementById('chatList');
-                    chatList.innerHTML = '';
-
-                    data.forEach(chat => {
-                        const formattedPhone = formatPhoneNumber(chat.phoneNumber);
-                        const listItem = document.createElement('li');
-                        listItem.textContent = formattedPhone;
-                        listItem.classList.add('chat-item');
-                        listItem.addEventListener('click', () => {
-                            fetchMessages(formattedPhone);
-                            currentPhoneNumber = formattedPhone; // Set active chat
-                            document.getElementById('phone').value = formattedPhone; // Update input
-                            document.querySelectorAll('.chat-item').forEach(item => item.classList.remove('active'));
-                            listItem.classList.add('active');
-                        });
-                        chatList.appendChild(listItem);
-                    });
-                }
+                chats.forEach(chat => {
+                    const listItem = document.createElement('li');
+                    listItem.textContent = chat.phoneNumber;
+                    listItem.onclick = () => loadChat(chat.phoneNumber);
+                    chatList.appendChild(listItem);
+                });
             } catch (error) {
                 console.error('Error fetching chats:', error);
             }
         }
 
-        // Fetch messages for a specific number
-        async function fetchMessages(phoneNumber) {
+        // Load messages for a specific chat
+        async function loadChat(phoneNumber) {
+            currentPhoneNumber = phoneNumber;
+
             try {
                 const response = await fetch(`/api/chat/${phoneNumber}`);
-                const data = await response.json();
+                const chat = await response.json();
 
-                if (data) {
-                    const chatTitle = document.getElementById('chatTitle');
-                    const chatMessages = document.getElementById('chatMessages');
+                const chatTitle = document.getElementById('chatTitle');
+                const chatMessages = document.getElementById('chatMessages');
+                chatTitle.textContent = `Chat with ${phoneNumber}`;
+                chatMessages.innerHTML = '';
 
-                    chatTitle.textContent = `Chat with ${phoneNumber}`;
-                    chatMessages.innerHTML = data.messages
-                        .map(msg => `
-                            <div class="${msg.sender === 'you' ? 'user-message' : 'system-message'}">
-                                ${msg.text || `<img src="${msg.mediaUrl}" alt="Media">`}
-                                <span class="timestamp">${new Date(msg.timestamp).toLocaleString()}</span>
-                            </div>
-                        `)
-                        .join('');
-                    chatMessages.scrollTop = chatMessages.scrollHeight;
-                }
+                chat.messages.forEach(msg => {
+                    const messageDiv = document.createElement('div');
+                    messageDiv.className = msg.sender === 'you' ? 'sent' : 'received';
+                    messageDiv.innerHTML = `
+                        ${msg.text || `<img src="${msg.mediaUrl}" alt="Media" />`}
+                        <div class="timestamp">${new Date(msg.timestamp).toLocaleString()}</div>
+                    `;
+                    chatMessages.appendChild(messageDiv);
+                });
+
+                chatMessages.scrollTop = chatMessages.scrollHeight;
             } catch (error) {
-                console.error('Error fetching messages:', error);
+                console.error('Error loading chat:', error);
             }
         }
 
-        // WebSocket for real-time updates
-        const socket = new WebSocket('ws://localhost:3000'); // Replace with your WebSocket server URL
+        // Send a message
+        document.getElementById('sendMessageForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
 
-        socket.onmessage = (event) => {
-            const data = JSON.parse(event.data);
-
-            // Check if the message belongs to the current chat
-            if (data.phoneNumber === currentPhoneNumber) {
-                const chatMessages = document.getElementById('chatMessages');
-                const messageHtml = `
-                    <div class="${data.sender === 'you' ? 'user-message' : 'system-message'}">
-                        ${data.text}
-                        <span class="timestamp">${new Date(data.timestamp).toLocaleString()}</span>
-                    </div>
-                `;
-                chatMessages.insertAdjacentHTML('beforeend', messageHtml);
-                chatMessages.scrollTop = chatMessages.scrollHeight; // Auto-scroll
-            }
-        };
-
-        // Send message
-        document.getElementById('sendMessageForm').addEventListener('submit', async function (event) {
-            event.preventDefault();
-
-            const phoneInput = document.getElementById('phone');
-            const phone = currentPhoneNumber || formatPhoneNumber(phoneInput.value);
+            const phone = document.getElementById('phone').value;
             const message = document.getElementById('message').value;
-            const mediaFile = document.getElementById('media').files[0];
 
-            const formData = new FormData();
-            formData.append('phoneNumber', phone);
-            formData.append('message', message);
-
-            if (mediaFile) {
-                formData.append('media', mediaFile);
+            if (!phone && !currentPhoneNumber) {
+                alert('Please enter a phone number or select a chat.');
+                return;
             }
+
+            const phoneNumber = currentPhoneNumber || phone;
 
             try {
                 const response = await fetch('/api/send-message', {
                     method: 'POST',
-                    body: JSON.stringify(Object.fromEntries(formData)),
                     headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ phoneNumber, message }),
                 });
+
                 const data = await response.json();
 
-                if (data.message === 'Message sent') {
-                    fetchMessages(phone);
+                if (data.message === 'Message sent successfully') {
+                    loadChat(phoneNumber);
                     document.getElementById('message').value = '';
-                    document.getElementById('media').value = '';
                 } else {
-                    alert('Failed to send message!');
+                    alert('Failed to send message.');
                 }
             } catch (error) {
                 console.error('Error sending message:', error);

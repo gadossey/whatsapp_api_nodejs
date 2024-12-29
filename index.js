@@ -3,6 +3,7 @@ const express = require('express');
 const mongoose = require('mongoose');
 const bodyParser = require('body-parser');
 const path = require('path');
+const axios = require('axios'); // For making HTTP requests
 
 // Initialize express app
 const app = express();
@@ -15,12 +16,22 @@ mongoose.connect(mongoURI, {
     useUnifiedTopology: true,
 })
     .then(() => console.log('MongoDB connected'))
-    .catch((err) => console.log('MongoDB connection error:', err));
+    .catch(err => {
+        console.error('MongoDB connection error:', err);
+        process.exit(1); // Exit if database connection fails
+    });
 
 // Chat session schema
 const chatSessionSchema = new mongoose.Schema({
     phoneNumber: { type: String, required: true },
-    messages: [{ sender: String, text: String, timestamp: Date }]
+    messages: [
+        {
+            sender: { type: String, required: true },
+            text: { type: String },
+            mediaUrl: { type: String },
+            timestamp: { type: Date, default: Date.now },
+        },
+    ],
 });
 
 const ChatSession = mongoose.model('ChatSession', chatSessionSchema);
@@ -34,7 +45,8 @@ app.get('/api/chats', async (req, res) => {
         const chats = await ChatSession.find();
         res.json(chats);
     } catch (err) {
-        res.status(500).json({ message: 'Error fetching chat sessions' });
+        console.error('Error fetching chats:', err.message);
+        res.status(500).json({ message: 'Error fetching chats' });
     }
 });
 
@@ -48,19 +60,40 @@ app.get('/api/chat/:phoneNumber', async (req, res) => {
         }
         res.json(chat);
     } catch (err) {
+        console.error('Error fetching chat:', err.message);
         res.status(500).json({ message: 'Error fetching chat' });
     }
 });
 
 // Route to send a message
 app.post('/api/send-message', async (req, res) => {
-    const { phoneNumber, message } = req.body;
+    const { phoneNumber, message, mediaUrl } = req.body;
 
-    if (!phoneNumber || !message) {
-        return res.status(400).json({ message: 'Phone number and message are required' });
+    if (!phoneNumber || (!message && !mediaUrl)) {
+        return res.status(400).json({ message: 'Phone number and message or media URL are required' });
     }
 
     try {
+        // Send the message using the WhatsApp Business API
+        const whatsappResponse = await axios.post(
+            `https://graph.facebook.com/v17.0/${process.env.PHONE_NUMBER_ID}/messages`,
+            {
+                messaging_product: 'whatsapp',
+                to: phoneNumber,
+                type: mediaUrl ? 'image' : 'text',
+                ...(mediaUrl
+                    ? { image: { link: mediaUrl } }
+                    : { text: { body: message } }),
+            },
+            {
+                headers: {
+                    Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
+                    'Content-Type': 'application/json',
+                },
+            }
+        );
+
+        // Save the message in the database
         let chat = await ChatSession.findOne({ phoneNumber });
         if (!chat) {
             chat = new ChatSession({ phoneNumber, messages: [] });
@@ -68,18 +101,21 @@ app.post('/api/send-message', async (req, res) => {
 
         chat.messages.push({
             sender: 'you',
-            text: message,
-            timestamp: new Date()
+            text: message || '',
+            mediaUrl: mediaUrl || null,
+            timestamp: new Date(),
         });
 
         await chat.save();
+
         res.json({ message: 'Message sent successfully', chat });
     } catch (err) {
+        console.error('Error sending message:', err.response?.data || err.message);
         res.status(500).json({ message: 'Error sending message', error: err.message });
     }
 });
 
-// Serve the index.html file for the root route
+// Serve the index.html for the root route
 app.get('/', (req, res) => {
     res.sendFile(path.join(__dirname, 'public', 'index.html'));
 });
