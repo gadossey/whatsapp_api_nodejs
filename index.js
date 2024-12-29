@@ -3,23 +3,32 @@ const express = require('express');
 const mongoose = require('mongoose');
 const bodyParser = require('body-parser');
 const path = require('path');
-const axios = require('axios'); // For making HTTP requests
+const axios = require('axios');
+const helmet = require('helmet');
+const morgan = require('morgan');
 
+// Validate required environment variables
+const requiredEnvVars = ['MONGO_URI', 'PHONE_NUMBER_ID', 'WHATSAPP_TOKEN', 'VERIFY_TOKEN', 'PORT'];
+for (const varName of requiredEnvVars) {
+    if (!process.env[varName]) {
+        console.error(`Missing required environment variable: ${varName}`);
+        process.exit(1);
+    }
+}
 
 // Initialize express app
 const app = express();
+app.use(helmet());
 app.use(bodyParser.json());
+app.use(morgan('dev'));
 
 // Connect to MongoDB
-const mongoURI = process.env.MONGO_URI;
-mongoose.connect(mongoURI, {
-    useNewUrlParser: true,
-    useUnifiedTopology: true,
-})
+mongoose
+    .connect(process.env.MONGO_URI, { useNewUrlParser: true, useUnifiedTopology: true })
     .then(() => console.log('MongoDB connected'))
-    .catch(err => {
+    .catch((err) => {
         console.error('MongoDB connection error:', err);
-        process.exit(1); // Exit if database connection fails
+        process.exit(1);
     });
 
 // Chat session schema
@@ -27,165 +36,152 @@ const chatSessionSchema = new mongoose.Schema({
     phoneNumber: { type: String, required: true },
     messages: [
         {
-            sender: { type: String, required: true },
+            sender: { type: String, enum: ['you', 'system', 'user'], required: true },
             text: { type: String },
             mediaUrl: { type: String },
             timestamp: { type: Date, default: Date.now },
         },
     ],
-});
+}, { timestamps: true });
 
 const ChatSession = mongoose.model('ChatSession', chatSessionSchema);
 
 // Utility to normalize phone numbers
 const DEFAULT_COUNTRY_CODE = '+233';
-
 function normalizePhoneNumber(phone) {
     if (!phone) return null;
-
     phone = phone.trim();
-
-    // If the number starts with '+', it's already formatted
-    if (phone.startsWith('+')) {
-        return phone;
-    }
-
-    // If the number starts with the country code without '+', add '+'
-    if (phone.startsWith(DEFAULT_COUNTRY_CODE.replace('+', ''))) {
-        return `+${phone}`;
-    }
-
-    // If the number starts with '0', replace it with the country code
-    if (phone.startsWith('0')) {
-        return DEFAULT_COUNTRY_CODE + phone.substring(1);
-    }
-
-    // Otherwise, assume it's missing the country code
+    if (phone.startsWith('+')) return phone;
+    if (phone.startsWith(DEFAULT_COUNTRY_CODE.replace('+', ''))) return `+${phone}`;
+    if (phone.startsWith('0')) return DEFAULT_COUNTRY_CODE + phone.substring(1);
     return DEFAULT_COUNTRY_CODE + phone;
 }
 
-// Serve static files from the "public" directory
+// Middleware for error handling
+function asyncHandler(fn) {
+    return (req, res, next) => {
+        Promise.resolve(fn(req, res, next)).catch(next);
+    };
+}
+
+// Serve static files
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Route to fetch all chat sessions
-app.get('/api/chats', async (req, res) => {
-    try {
-        const chats = await ChatSession.find();
-        res.json(chats);
-    } catch (err) {
-        console.error('Error fetching chats:', err.message);
-        res.status(500).json({ message: 'Error fetching chats' });
-    }
-});
+app.get('/api/chats', asyncHandler(async (req, res) => {
+    const chats = await ChatSession.find().sort({ updatedAt: -1 });
+    res.json(chats);
+}));
 
-// Route to fetch a specific chat by phone number
-app.get('/api/chat/:phoneNumber', async (req, res) => {
+// Route to fetch a specific chat
+app.get('/api/chat/:phoneNumber', asyncHandler(async (req, res) => {
     const { phoneNumber } = req.params;
-    try {
-        const normalizedNumber = normalizePhoneNumber(phoneNumber);
-        const chat = await ChatSession.findOne({ phoneNumber: normalizedNumber });
-        if (!chat) {
-            return res.status(404).json({ message: 'Chat not found' });
-        }
-        res.json(chat);
-    } catch (err) {
-        console.error('Error fetching chat:', err.message);
-        res.status(500).json({ message: 'Error fetching chat' });
-    }
-});
+    const normalizedNumber = normalizePhoneNumber(phoneNumber);
+    if (!normalizedNumber) return res.status(400).json({ message: 'Invalid phone number' });
+
+    const chat = await ChatSession.findOne({ phoneNumber: normalizedNumber });
+    if (!chat) return res.status(404).json({ message: 'Chat not found' });
+
+    chat.messages.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+    res.json(chat);
+}));
 
 // Route to send a message
-app.post('/api/send-message', async (req, res) => {
+app.post('/api/send-message', asyncHandler(async (req, res) => {
     const { phoneNumber, message, mediaUrl } = req.body;
-
     if (!phoneNumber || (!message && !mediaUrl)) {
         return res.status(400).json({ message: 'Phone number and message or media URL are required' });
     }
 
-    try {
-        // Send the message using the WhatsApp Business API
-        const whatsappResponse = await axios.post(
-            `https://graph.facebook.com/v17.0/${process.env.PHONE_NUMBER_ID}/messages`,
-            {
-                messaging_product: 'whatsapp',
-                to: phoneNumber,
-                type: mediaUrl ? 'image' : 'text',
-                ...(mediaUrl
-                    ? { image: { link: mediaUrl } }
-                    : { text: { body: message } }),
+    const normalizedNumber = normalizePhoneNumber(phoneNumber);
+    if (!normalizedNumber) return res.status(400).json({ message: 'Invalid phone number' });
+
+    // Send message via WhatsApp Business API
+    await axios.post(
+        `https://graph.facebook.com/v17.0/${process.env.PHONE_NUMBER_ID}/messages`,
+        {
+            messaging_product: 'whatsapp',
+            to: normalizedNumber,
+            type: mediaUrl ? 'image' : 'text',
+            ...(mediaUrl ? { image: { link: mediaUrl } } : { text: { body: message } }),
+        },
+        {
+            headers: {
+                Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
+                'Content-Type': 'application/json',
             },
-            {
-                headers: {
-                    Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
-                    'Content-Type': 'application/json',
-                },
-            }
-        );
-
-        // Save the message in the database
-        let chat = await ChatSession.findOne({ phoneNumber });
-        if (!chat) {
-            chat = new ChatSession({ phoneNumber, messages: [] });
         }
+    );
 
-        chat.messages.push({
-            sender: 'you',
-            text: message || '',
-            mediaUrl: mediaUrl || null,
-            timestamp: new Date(),
-        });
+    // Save message in DB
+    let chat = await ChatSession.findOne({ phoneNumber: normalizedNumber });
+    if (!chat) chat = new ChatSession({ phoneNumber: normalizedNumber, messages: [] });
 
-        await chat.save();
+    chat.messages.push({
+        sender: 'you',
+        text: message || '',
+        mediaUrl: mediaUrl || null,
+        timestamp: new Date(),
+    });
+    await chat.save();
 
-        res.json({ message: 'Message sent successfully', chat });
-    } catch (err) {
-        console.error('Error sending message:', err.response?.data || err.message);
-        res.status(500).json({ message: 'Error sending message', error: err.message });
+    res.json({ message: 'Message sent successfully', chat });
+}));
+
+// WhatsApp Webhook to receive messages
+app.post('/api/webhook', asyncHandler(async (req, res) => {
+    const body = req.body;
+
+    if (body.object === 'whatsapp_business_account') {
+        for (const entry of body.entry || []) {
+            for (const change of entry.changes || []) {
+                if (change.field === 'messages' && change.value.messages) {
+                    const messages = change.value.messages;
+
+                    for (const message of messages) {
+                        const phoneNumber = normalizePhoneNumber(message.from);
+                        const text = message.text?.body || null;
+
+                        console.log(`Received message from ${phoneNumber}: ${text}`);
+
+                        let chat = await ChatSession.findOne({ phoneNumber });
+                        if (!chat) chat = new ChatSession({ phoneNumber, messages: [] });
+
+                        // Mark the sender as 'user' for received messages
+                        chat.messages.push({
+                            sender: 'user', // this is the key part
+                            text,
+                            timestamp: new Date(),
+                        });
+                        await chat.save();
+                    }
+                }
+            }
+        }
+        res.status(200).send('EVENT_RECEIVED');
+    } else {
+        res.sendStatus(404);
+    }
+}));
+
+
+// WhatsApp Webhook verification
+app.get('/api/webhook', (req, res) => {
+    const mode = req.query['hub.mode'];
+    const token = req.query['hub.verify_token'];
+    const challenge = req.query['hub.challenge'];
+
+    if (mode === 'subscribe' && token === process.env.VERIFY_TOKEN) {
+        res.status(200).send(challenge);
+    } else {
+        res.status(403).send('Verification failed');
     }
 });
 
-
-// Route to fix duplicate numbers in the database
-app.get('/api/fix-duplicates', async (req, res) => {
-    try {
-        const chats = await ChatSession.find();
-
-        const normalizedMap = {};
-
-        for (const chat of chats) {
-            const normalizedNumber = normalizePhoneNumber(chat.phoneNumber);
-
-            if (!normalizedNumber) continue;
-
-            if (!normalizedMap[normalizedNumber]) {
-                normalizedMap[normalizedNumber] = chat;
-            } else {
-                // Merge messages if the number already exists
-                normalizedMap[normalizedNumber].messages = [
-                    ...normalizedMap[normalizedNumber].messages,
-                    ...chat.messages,
-                ];
-                await ChatSession.deleteOne({ _id: chat._id }); // Remove duplicate
-            }
-        }
-
-        // Save updated chats
-        for (const normalizedNumber in normalizedMap) {
-            const chat = normalizedMap[normalizedNumber];
-            chat.phoneNumber = normalizedNumber; // Ensure consistent format
-            await chat.save();
-        }
-
-        res.json({ message: 'Duplicates fixed and normalized successfully' });
-    } catch (err) {
-        console.error('Error fixing duplicates:', err.message);
-        res.status(500).json({ message: 'Error fixing duplicates', error: err.message });
-    }
-});
-
-// Serve the index.html for the root route
-app.get('/', (req, res) => {
-    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+// Central error handling middleware
+app.use((err, req, res, next) => {
+    console.error(err.stack);
+    res.status(500).json({ message: 'Internal Server Error', error: err.message });
 });
 
 // Start server
