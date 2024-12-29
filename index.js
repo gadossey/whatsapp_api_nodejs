@@ -5,6 +5,7 @@ const bodyParser = require('body-parser');
 const path = require('path');
 const axios = require('axios'); // For making HTTP requests
 
+
 // Initialize express app
 const app = express();
 app.use(bodyParser.json());
@@ -36,6 +37,33 @@ const chatSessionSchema = new mongoose.Schema({
 
 const ChatSession = mongoose.model('ChatSession', chatSessionSchema);
 
+// Utility to normalize phone numbers
+const DEFAULT_COUNTRY_CODE = '+233';
+
+function normalizePhoneNumber(phone) {
+    if (!phone) return null;
+
+    phone = phone.trim();
+
+    // If the number starts with '+', it's already formatted
+    if (phone.startsWith('+')) {
+        return phone;
+    }
+
+    // If the number starts with the country code without '+', add '+'
+    if (phone.startsWith(DEFAULT_COUNTRY_CODE.replace('+', ''))) {
+        return `+${phone}`;
+    }
+
+    // If the number starts with '0', replace it with the country code
+    if (phone.startsWith('0')) {
+        return DEFAULT_COUNTRY_CODE + phone.substring(1);
+    }
+
+    // Otherwise, assume it's missing the country code
+    return DEFAULT_COUNTRY_CODE + phone;
+}
+
 // Serve static files from the "public" directory
 app.use(express.static(path.join(__dirname, 'public')));
 
@@ -54,7 +82,8 @@ app.get('/api/chats', async (req, res) => {
 app.get('/api/chat/:phoneNumber', async (req, res) => {
     const { phoneNumber } = req.params;
     try {
-        const chat = await ChatSession.findOne({ phoneNumber });
+        const normalizedNumber = normalizePhoneNumber(phoneNumber);
+        const chat = await ChatSession.findOne({ phoneNumber: normalizedNumber });
         if (!chat) {
             return res.status(404).json({ message: 'Chat not found' });
         }
@@ -112,6 +141,45 @@ app.post('/api/send-message', async (req, res) => {
     } catch (err) {
         console.error('Error sending message:', err.response?.data || err.message);
         res.status(500).json({ message: 'Error sending message', error: err.message });
+    }
+});
+
+
+// Route to fix duplicate numbers in the database
+app.get('/api/fix-duplicates', async (req, res) => {
+    try {
+        const chats = await ChatSession.find();
+
+        const normalizedMap = {};
+
+        for (const chat of chats) {
+            const normalizedNumber = normalizePhoneNumber(chat.phoneNumber);
+
+            if (!normalizedNumber) continue;
+
+            if (!normalizedMap[normalizedNumber]) {
+                normalizedMap[normalizedNumber] = chat;
+            } else {
+                // Merge messages if the number already exists
+                normalizedMap[normalizedNumber].messages = [
+                    ...normalizedMap[normalizedNumber].messages,
+                    ...chat.messages,
+                ];
+                await ChatSession.deleteOne({ _id: chat._id }); // Remove duplicate
+            }
+        }
+
+        // Save updated chats
+        for (const normalizedNumber in normalizedMap) {
+            const chat = normalizedMap[normalizedNumber];
+            chat.phoneNumber = normalizedNumber; // Ensure consistent format
+            await chat.save();
+        }
+
+        res.json({ message: 'Duplicates fixed and normalized successfully' });
+    } catch (err) {
+        console.error('Error fixing duplicates:', err.message);
+        res.status(500).json({ message: 'Error fixing duplicates', error: err.message });
     }
 });
 
