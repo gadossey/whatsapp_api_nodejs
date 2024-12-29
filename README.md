@@ -13,3 +13,22 @@ $ npm install
 ```sh
 $ node index
 ```
+
+
+/project
+|-- /src
+|   |-- /controllers
+|   |   |-- ChatController.js
+|   |   |-- WebhookController.js
+|   |-- /models
+|   |   |-- ChatSession.js
+|   |-- /routes
+|   |   |-- ChatRoutes.js
+|   |   |-- WebhookRoutes.js
+|   |-- /services
+|   |   |-- WhatsAppService.js
+|   |-- app.js
+|-- /public
+|   |-- index.html
+|-- .env
+|-- index.js

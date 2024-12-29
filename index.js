@@ -1,118 +1,91 @@
-require('dotenv').config()
-const axios = require('axios')
-const FormData = require('form-data')
-const fs = require('fs')
+require('dotenv').config();
+const express = require('express');
+const mongoose = require('mongoose');
+const bodyParser = require('body-parser');
+const path = require('path');
 
-async function sendTemplateMessage() {
-    const response = await axios({
-        url: 'https://graph.facebook.com/v20.0/phone_number_id/messages',
-        method: 'post',
-        headers: {
-            'Authorization': `Bearer ${process.env.WHATSAPP_TOKEN}`,
-            'Content-Type': 'application/json'
-        },
-        data: JSON.stringify({
-            messaging_product: 'whatsapp',
-            to: 'phone_number',
-            type: 'template',
-            template:{
-                name: 'discount',
-                language: {
-                    code: 'en_US'
-                },
-                components: [
-                    {
-                        type: 'header',
-                        parameters: [
-                            {
-                                type: 'text',
-                                text: 'John Doe'
-                            }
-                        ]
-                    },
-                    {
-                        type: 'body',
-                        parameters: [
-                            {
-                                type: 'text',
-                                text: '50'
-                            }
-                        ]
-                    }
-                ]
-            }
-        })
-    })
+// Initialize express app
+const app = express();
+app.use(bodyParser.json());
 
-    console.log(response.data)
-}
+// Connect to MongoDB
+const mongoURI = process.env.MONGO_URI;
+mongoose.connect(mongoURI, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+})
+    .then(() => console.log('MongoDB connected'))
+    .catch((err) => console.log('MongoDB connection error:', err));
 
-async function sendTextMessage() {
-    const response = await axios({
-        url: 'https://graph.facebook.com/v20.0/phone_number_id/messages',
-        method: 'post',
-        headers: {
-            'Authorization': `Bearer ${process.env.WHATSAPP_TOKEN}`,
-            'Content-Type': 'application/json'
-        },
-        data: JSON.stringify({
-            messaging_product: 'whatsapp',
-            to: 'phone_number',
-            type: 'text',
-            text:{
-                body: 'This is a text message'
-            }
-        })
-    })
+// Chat session schema
+const chatSessionSchema = new mongoose.Schema({
+    phoneNumber: { type: String, required: true },
+    messages: [{ sender: String, text: String, timestamp: Date }]
+});
 
-    console.log(response.data) 
-}
+const ChatSession = mongoose.model('ChatSession', chatSessionSchema);
 
-async function sendMediaMessage() {
-    const response = await axios({
-        url: 'https://graph.facebook.com/v20.0/phone_number_id/messages',
-        method: 'post',
-        headers: {
-            'Authorization': `Bearer ${process.env.WHATSAPP_TOKEN}`,
-            'Content-Type': 'application/json'
-        },
-        data: JSON.stringify({
-            messaging_product: 'whatsapp',
-            to: 'phone_number',
-            type: 'image',
-            image:{
-                //link: 'https://dummyimage.com/600x400/000/fff.png&text=manfra.io',
-                id: '512126264622813',
-                caption: 'This is a media message'
-            }
-        })
-    })
+// Serve static files from the "public" directory
+app.use(express.static(path.join(__dirname, 'public')));
 
-    console.log(response.data)    
-}
+// Route to fetch all chat sessions
+app.get('/api/chats', async (req, res) => {
+    try {
+        const chats = await ChatSession.find();
+        res.json(chats);
+    } catch (err) {
+        res.status(500).json({ message: 'Error fetching chat sessions' });
+    }
+});
 
-async function uploadImage() {
-    const data = new FormData()
-    data.append('messaging_product', 'whatsapp')
-    data.append('file', fs.createReadStream(process.cwd() + '/logo.png'), { contentType: 'image/png' })
-    data.append('type', 'image/png')
+// Route to fetch a specific chat by phone number
+app.get('/api/chat/:phoneNumber', async (req, res) => {
+    const { phoneNumber } = req.params;
+    try {
+        const chat = await ChatSession.findOne({ phoneNumber });
+        if (!chat) {
+            return res.status(404).json({ message: 'Chat not found' });
+        }
+        res.json(chat);
+    } catch (err) {
+        res.status(500).json({ message: 'Error fetching chat' });
+    }
+});
 
-    const response = await axios({
-        url: 'https://graph.facebook.com/v20.0/phone_number_id/media',
-        method: 'post',
-        headers: {
-            'Authorization': `Bearer ${process.env.WHATSAPP_TOKEN}`
-        },
-        data: data
-    })
+// Route to send a message
+app.post('/api/send-message', async (req, res) => {
+    const { phoneNumber, message } = req.body;
 
-    console.log(response.data)     
-}
+    if (!phoneNumber || !message) {
+        return res.status(400).json({ message: 'Phone number and message are required' });
+    }
 
-// sendTemplateMessage()
+    try {
+        let chat = await ChatSession.findOne({ phoneNumber });
+        if (!chat) {
+            chat = new ChatSession({ phoneNumber, messages: [] });
+        }
 
-// sendTextMessage()
+        chat.messages.push({
+            sender: 'you',
+            text: message,
+            timestamp: new Date()
+        });
 
-// sendMediaMessage()
+        await chat.save();
+        res.json({ message: 'Message sent successfully', chat });
+    } catch (err) {
+        res.status(500).json({ message: 'Error sending message', error: err.message });
+    }
+});
 
-// uploadImage()
+// Serve the index.html file for the root route
+app.get('/', (req, res) => {
+    res.sendFile(path.join(__dirname, 'public', 'index.html'));
+});
+
+// Start server
+const port = process.env.PORT || 3000;
+app.listen(port, () => {
+    console.log(`Server running at http://localhost:${port}`);
+});
