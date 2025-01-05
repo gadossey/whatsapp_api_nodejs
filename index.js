@@ -172,7 +172,9 @@ app.post('/api/webhook', asyncHandler(async (req, res) => {
                                         parameters: [
                                             {
                                                 type: 'image',
-
+                                                image: {
+                                                    link: 'https://nsem.com.gh/Logo.png' // Replace with your image URL
+                                                }
                                             }
                                         ]
                                     },
