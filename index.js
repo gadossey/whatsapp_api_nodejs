@@ -207,7 +207,7 @@ app.post(
                                 to: phoneNumber,
                                 type: 'template',
                                 template: {
-                                    name: 'greetings',
+                                    name: 'nsem_ghana_mit',
                                     language: { code: 'en' },
                                 },
                             };
