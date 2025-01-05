@@ -173,6 +173,8 @@ app.post('/api/webhook', asyncHandler(async (req, res) => {
 
 
                         try {
+                            console.log('Sending auto-reply template:', JSON.stringify(autoReplyTemplate, null, 2));
+
                             const autoReplyResponse = await axios.post(
                                 `https://graph.facebook.com/v17.0/${process.env.PHONE_NUMBER_ID}/messages`,
                                 autoReplyTemplate,
@@ -183,7 +185,8 @@ app.post('/api/webhook', asyncHandler(async (req, res) => {
                                     },
                                 }
                             );
-                            console.log(`Auto-reply sent to ${phoneNumber}:`, autoReplyResponse.data);
+
+                            console.log(`Auto-reply sent successfully to ${phoneNumber}:`, JSON.stringify(autoReplyResponse.data, null, 2));
 
                             // Log the auto-reply in the chat
                             chat.messages.push({
@@ -194,27 +197,33 @@ app.post('/api/webhook', asyncHandler(async (req, res) => {
 
                             await chat.save();
                         } catch (error) {
-                            // Enhanced error logging
-                            const errorData = {
-                                context: 'Error sending auto-reply',
-                                autoReplyTemplate, // include the message structure to inspect the issues
-                                errorResponse: error.response?.data || error.message, // specific API error data
-                                stack: error.stack,
-                            };
-                            console.error(JSON.stringify(errorData, null, 2));
+                            console.error('Error sending auto-reply:');
 
-                            // Optional retry logic
-                            if (error.response?.status === 500) {
-                                console.error('Retryable error detected. Implement retry logic if needed.');
+                            // Log the request details for debugging
+                            console.error('Request Payload:', JSON.stringify(autoReplyTemplate, null, 2));
+
+                            // Log the full error response from WhatsApp API
+                            if (error.response) {
+                                console.error('Error Response:', {
+                                    status: error.response.status,
+                                    headers: error.response.headers,
+                                    data: error.response.data,
+                                });
+                            } else {
+                                console.error('Error Message:', error.message);
                             }
 
                             // Log specific cases
                             if (error.response?.data?.error?.details) {
-                                console.error('Missing Parameters:', error.response.data.error.details);
-                            } else {
-                                console.error('Unhandled error response:', error.response?.data || 'Unknown error');
+                                console.error('Error Details:', error.response.data.error.details);
+                            }
+
+                            // Retry logic placeholder (optional)
+                            if (error.response?.status === 500) {
+                                console.warn('Retryable error detected. Implement retry logic here if needed.');
                             }
                         }
+
 
                     }
                 }
