@@ -167,12 +167,7 @@ app.post('/api/webhook', asyncHandler(async (req, res) => {
                                 name: 'main_final_ghana',
                                 language: { code: 'en_US' },
                                 components: [
-                                    {
-                                        type: 'header',
-                                        parameters: [
-                                            { type: 'text', text: 'Afenhyia Pa o!' },
-                                        ],
-                                    },
+
                                     {
                                         type: 'body',
                                         parameters: [
