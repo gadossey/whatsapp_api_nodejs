@@ -166,34 +166,7 @@ app.post('/api/webhook', asyncHandler(async (req, res) => {
                             template: {
                                 name: 'greetings',
                                 language: { code: 'en' },
-                                components: [
-                                    {
-                                        type: 'header',
-                                        parameters: [
-                                            {
-                                                type: 'image',
-                                                image: {
-                                                    link: 'https://nsem.com.gh/Logo.png', // Replace with your image URL
-                                                },
-                                            },
-                                        ],
-                                    },
-                                    {
-                                        type: 'body',
 
-                                    },
-                                    {
-                                        type: 'button',
-                                        sub_type: 'url', // Specify the button sub-type
-                                        index: '0', // Add index here
-                                        parameters: [
-                                            {
-                                                type: 'text', // The type of parameter expected in the button
-                                                text: 'Visit Website',
-                                            },
-                                        ],
-                                    },
-                                ],
                             },
                         };
 
