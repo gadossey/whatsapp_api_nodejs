@@ -144,16 +144,62 @@ app.post('/api/webhook', asyncHandler(async (req, res) => {
 
                         console.log(`Received message from ${phoneNumber}: ${text}`);
 
+                        // Find or create chat session
                         let chat = await ChatSession.findOne({ phoneNumber });
                         if (!chat) chat = new ChatSession({ phoneNumber, messages: [] });
 
-                        // Mark the sender as 'user' for received messages
+                        // Add the incoming message to the chat
                         chat.messages.push({
-                            sender: 'user', // this is the key part
+                            sender: 'user',
                             text,
                             timestamp: new Date(),
                         });
+
+                        // Save chat with the new message
                         await chat.save();
+
+                        // Send auto-reply using WhatsApp API
+                        const autoReplyTemplate = {
+                            messaging_product: 'whatsapp',
+                            to: phoneNumber,
+                            type: 'template',
+                            template: {
+                                name: 'greetings', // Replace with your approved template name
+                                language: { code: 'en_US' }, // Replace with the template's language code
+                                components: [
+                                    {
+                                        type: 'body',
+                                        parameters: parameters.map(param => ({ type: 'text', text: param }))
+
+                                    },
+                                ],
+                            },
+                        };
+
+                        const autoReplyResponse = await axios.post(
+                            `https://graph.facebook.com/v17.0/${process.env.PHONE_NUMBER_ID}/messages`,
+                            autoReplyTemplate,
+                            {
+                                headers: {
+                                    Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
+                                    'Content-Type': 'application/json',
+                                },
+                            }
+                        );
+
+                        console.log(`Auto-reply sent to ${phoneNumber}:`, autoReplyResponse.data);
+
+                        // Log the auto-reply in the chat
+                        chat.messages.push({
+                            sender: 'system', // Indicating that this is an auto-reply
+                            text: 'Your auto-reply message here', // Replace with the actual auto-reply text sent
+                            timestamp: new Date(),
+                        });
+
+                        // Save the chat with the auto-reply
+                        await chat.save();
+
+                        console.log(`Auto-reply logged in chat for ${phoneNumber}`);
                     }
                 }
             }
@@ -163,6 +209,8 @@ app.post('/api/webhook', asyncHandler(async (req, res) => {
         res.sendStatus(404);
     }
 }));
+
+
 
 
 // WhatsApp Webhook verification
