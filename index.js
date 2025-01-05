@@ -167,6 +167,21 @@ app.post('/api/webhook', asyncHandler(async (req, res) => {
                                 name: 'greetings',
                                 language: { code: 'en' },
 
+                                "components": [
+                                    {
+                                        "type": "header",
+                                        "parameters": [
+                                            {
+                                                "type": "image",
+
+                                            }
+                                        ]
+                                    },
+                                    {
+                                        "type": "body",
+
+                                    }
+                                ]
                             },
                         };
 
