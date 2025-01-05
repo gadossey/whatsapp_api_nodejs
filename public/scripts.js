@@ -109,6 +109,7 @@ document.getElementById('sendMessageForm').addEventListener('submit', async (e) 
 
         if (data.message === 'Message sent successfully') {
             loadChat(phoneNumber);
+            fetchChats(); // Update chat list
             messageInput.value = '';
             mediaUrlInput.value = '';
         } else {
