@@ -180,12 +180,7 @@ app.post('/api/webhook', asyncHandler(async (req, res) => {
                                     },
                                     {
                                         type: 'body',
-                                        parameters: [
-                                            {
-                                                type: 'text',
-                                                text: 'Your dynamic body text here' // Replace with your dynamic content
-                                            }
-                                        ]
+
                                     },
                                     {
                                         type: 'button',
@@ -194,7 +189,7 @@ app.post('/api/webhook', asyncHandler(async (req, res) => {
                                         parameters: [
                                             {
                                                 type: 'text',
-                                                text: 'https://example.com' // Replace with your URL
+                                                text: 'https://nsem.com.gh' // Replace with your URL
                                             }
                                         ]
                                     }
