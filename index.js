@@ -184,6 +184,7 @@ app.post('/api/webhook', asyncHandler(async (req, res) => {
                                     },
                                     {
                                         type: 'button',
+                                        sub_type: 'url',
 
                                     }
                                 ]
@@ -213,8 +214,28 @@ app.post('/api/webhook', asyncHandler(async (req, res) => {
 
                             await chat.save();
                         } catch (error) {
-                            console.error('Error sending auto-reply:', error.response?.data || error.message);
+                            // Enhanced error logging
+                            const errorData = {
+                                context: 'Error sending auto-reply',
+                                autoReplyTemplate, // include the message structure to inspect the issues
+                                errorResponse: error.response?.data || error.message, // specific API error data
+                                stack: error.stack,
+                            };
+                            console.error(JSON.stringify(errorData, null, 2));
+
+                            // Optional retry logic
+                            if (error.response?.status === 500) {
+                                console.error('Retryable error detected. Implement retry logic if needed.');
+                            }
+
+                            // Log specific cases
+                            if (error.response?.data?.error?.details) {
+                                console.error('Missing Parameters:', error.response.data.error.details);
+                            } else {
+                                console.error('Unhandled error response:', error.response?.data || 'Unknown error');
+                            }
                         }
+
                     }
                 }
             }
