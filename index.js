@@ -173,23 +173,35 @@ app.post('/api/webhook', asyncHandler(async (req, res) => {
                                             {
                                                 type: 'image',
                                                 image: {
-                                                    link: 'https://nsem.com.gh/Logo.png' // Replace with your image URL
-                                                }
-                                            }
-                                        ]
+                                                    link: 'https://nsem.com.gh/Logo.png', // Replace with your image URL
+                                                },
+                                            },
+                                        ],
                                     },
                                     {
                                         type: 'body',
-
+                                        parameters: [
+                                            {
+                                                type: 'text',
+                                                text: 'Hello! Welcome to our service. How can we help you today?', // Replace with your message
+                                            },
+                                        ],
                                     },
                                     {
                                         type: 'button',
-                                        sub_type: 'url',
-
-                                    }
-                                ]
+                                        sub_type: 'url', // Specify the button sub-type
+                                        index: '0', // Add index here
+                                        parameters: [
+                                            {
+                                                type: 'text', // The type of parameter expected in the button
+                                                text: 'Visit Website',
+                                            },
+                                        ],
+                                    },
+                                ],
                             },
                         };
+
 
 
                         try {
