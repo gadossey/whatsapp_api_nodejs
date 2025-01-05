@@ -175,7 +175,15 @@ app.post('/api/webhook', asyncHandler(async (req, res) => {
                                     {
                                         "type": "body",
 
-                                    }
+                                    },
+                                    {
+                                        "type": "footer",
+
+                                    },
+                                    {
+                                        "type": "button",
+
+                                    },
                                 ]
                             },
                         };
