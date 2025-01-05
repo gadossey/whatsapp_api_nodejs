@@ -164,36 +164,43 @@ app.post('/api/webhook', asyncHandler(async (req, res) => {
                             to: phoneNumber,
                             type: 'template',
                             template: {
-                                name: 'greetings', // Replace with your approved template name
-                                language: { code: 'en_US' }, // Replace with the template's language code
-
+                                name: 'newghanaline',
+                                language: { code: 'en_US' },
+                                components: [
+                                    {
+                                        type: 'body',
+                                        parameters: [
+                                            { type: 'text', text: 'Vico' },
+                                        ],
+                                    },
+                                ],
                             },
                         };
 
-                        const autoReplyResponse = await axios.post(
-                            `https://graph.facebook.com/v17.0/${process.env.PHONE_NUMBER_ID}/messages`,
-                            autoReplyTemplate,
-                            {
-                                headers: {
-                                    Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
-                                    'Content-Type': 'application/json',
-                                },
-                            }
-                        );
+                        try {
+                            const autoReplyResponse = await axios.post(
+                                `https://graph.facebook.com/v17.0/${process.env.PHONE_NUMBER_ID}/messages`,
+                                autoReplyTemplate,
+                                {
+                                    headers: {
+                                        Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
+                                        'Content-Type': 'application/json',
+                                    },
+                                }
+                            );
+                            console.log(`Auto-reply sent to ${phoneNumber}:`, autoReplyResponse.data);
 
-                        console.log(`Auto-reply sent to ${phoneNumber}:`, autoReplyResponse.data);
+                            // Log the auto-reply in the chat
+                            chat.messages.push({
+                                sender: 'system',
+                                text: 'Your auto-reply message here', // Replace with the actual auto-reply text
+                                timestamp: new Date(),
+                            });
 
-                        // Log the auto-reply in the chat
-                        chat.messages.push({
-                            sender: 'system', // Indicating that this is an auto-reply
-                            text: 'Your auto-reply message here', // Replace with the actual auto-reply text sent
-                            timestamp: new Date(),
-                        });
-
-                        // Save the chat with the auto-reply
-                        await chat.save();
-
-                        console.log(`Auto-reply logged in chat for ${phoneNumber}`);
+                            await chat.save();
+                        } catch (error) {
+                            console.error('Error sending auto-reply:', error.response?.data || error.message);
+                        }
                     }
                 }
             }
@@ -203,9 +210,6 @@ app.post('/api/webhook', asyncHandler(async (req, res) => {
         res.sendStatus(404);
     }
 }));
-
-
-
 
 // WhatsApp Webhook verification
 app.get('/api/webhook', (req, res) => {
