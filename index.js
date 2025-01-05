@@ -32,17 +32,20 @@ mongoose
     });
 
 // Chat session schema
-const chatSessionSchema = new mongoose.Schema({
-    phoneNumber: { type: String, required: true },
-    messages: [
-        {
-            sender: { type: String, enum: ['you', 'system', 'user'], required: true },
-            text: { type: String },
-            mediaUrl: { type: String },
-            timestamp: { type: Date, default: Date.now },
-        },
-    ],
-}, { timestamps: true });
+const chatSessionSchema = new mongoose.Schema(
+    {
+        phoneNumber: { type: String, required: true },
+        messages: [
+            {
+                sender: { type: String, enum: ['you', 'system', 'user'], required: true },
+                text: { type: String },
+                mediaUrl: { type: String },
+                timestamp: { type: Date, default: Date.now },
+            },
+        ],
+    },
+    { timestamps: true }
+);
 
 const ChatSession = mongoose.model('ChatSession', chatSessionSchema);
 
@@ -68,172 +71,195 @@ function asyncHandler(fn) {
 app.use(express.static(path.join(__dirname, 'public')));
 
 // Route to fetch all chat sessions
-app.get('/api/chats', asyncHandler(async (req, res) => {
-    const chats = await ChatSession.find().sort({ updatedAt: -1 });
-    res.json(chats);
-}));
+app.get(
+    '/api/chats',
+    asyncHandler(async (req, res) => {
+        const chats = await ChatSession.find().sort({ updatedAt: -1 });
+        res.json(chats);
+    })
+);
 
 // Route to fetch a specific chat
-app.get('/api/chat/:phoneNumber', asyncHandler(async (req, res) => {
-    const { phoneNumber } = req.params;
-    const normalizedNumber = normalizePhoneNumber(phoneNumber);
-    if (!normalizedNumber) return res.status(400).json({ message: 'Invalid phone number' });
+app.get(
+    '/api/chat/:phoneNumber',
+    asyncHandler(async (req, res) => {
+        const { phoneNumber } = req.params;
+        const normalizedNumber = normalizePhoneNumber(phoneNumber);
+        if (!normalizedNumber) return res.status(400).json({ message: 'Invalid phone number' });
 
-    const chat = await ChatSession.findOne({ phoneNumber: normalizedNumber });
-    if (!chat) return res.status(404).json({ message: 'Chat not found' });
+        const chat = await ChatSession.findOne({ phoneNumber: normalizedNumber });
+        if (!chat) return res.status(404).json({ message: 'Chat not found' });
 
-    chat.messages.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-    res.json(chat);
-}));
+        chat.messages.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+        res.json(chat);
+    })
+);
 
 // Route to send a message
-app.post('/api/send-message', asyncHandler(async (req, res) => {
-    const { phoneNumber, message, mediaUrl } = req.body;
-    if (!phoneNumber || (!message && !mediaUrl)) {
-        return res.status(400).json({ message: 'Phone number and message or media URL are required' });
-    }
-
-    const normalizedNumber = normalizePhoneNumber(phoneNumber);
-    if (!normalizedNumber) return res.status(400).json({ message: 'Invalid phone number' });
-
-    // Send message via WhatsApp Business API
-    await axios.post(
-        `https://graph.facebook.com/v17.0/${process.env.PHONE_NUMBER_ID}/messages`,
-        {
-            messaging_product: 'whatsapp',
-            to: normalizedNumber,
-            type: mediaUrl ? 'image' : 'text',
-            ...(mediaUrl ? { image: { link: mediaUrl } } : { text: { body: message } }),
-        },
-        {
-            headers: {
-                Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
-                'Content-Type': 'application/json',
-            },
+app.post(
+    '/api/send-message',
+    asyncHandler(async (req, res) => {
+        const { phoneNumber, message, mediaUrl } = req.body;
+        if (!phoneNumber || (!message && !mediaUrl)) {
+            return res.status(400).json({ message: 'Phone number and message or media URL are required' });
         }
-    );
 
-    // Save message in DB
-    let chat = await ChatSession.findOne({ phoneNumber: normalizedNumber });
-    if (!chat) chat = new ChatSession({ phoneNumber: normalizedNumber, messages: [] });
+        const normalizedNumber = normalizePhoneNumber(phoneNumber);
+        if (!normalizedNumber) return res.status(400).json({ message: 'Invalid phone number' });
 
-    chat.messages.push({
-        sender: 'you',
-        text: message || '',
-        mediaUrl: mediaUrl || null,
-        timestamp: new Date(),
-    });
-    await chat.save();
+        // Send message via WhatsApp Business API
+        await axios.post(
+            `https://graph.facebook.com/v17.0/${process.env.PHONE_NUMBER_ID}/messages`,
+            {
+                messaging_product: 'whatsapp',
+                to: normalizedNumber,
+                type: mediaUrl ? 'image' : 'text',
+                ...(mediaUrl ? { image: { link: mediaUrl } } : { text: { body: message } }),
+            },
+            {
+                headers: {
+                    Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
+                    'Content-Type': 'application/json',
+                },
+            }
+        );
 
-    res.json({ message: 'Message sent successfully', chat });
-}));
+        // Save message in DB
+        let chat = await ChatSession.findOne({ phoneNumber: normalizedNumber });
+        if (!chat) chat = new ChatSession({ phoneNumber: normalizedNumber, messages: [] });
+
+        chat.messages.push({
+            sender: 'you',
+            text: message || '',
+            mediaUrl: mediaUrl || null,
+            timestamp: new Date(),
+        });
+        await chat.save();
+
+        res.json({ message: 'Message sent successfully', chat });
+    })
+);
+
+// Utility to fetch and log template details
+async function fetchAndLogTemplateDetails(templateName) {
+    try {
+        const response = await axios.get(
+            `https://graph.facebook.com/v17.0/${process.env.PHONE_NUMBER_ID}/message_templates`,
+            {
+                headers: {
+                    Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
+                },
+            }
+        );
+
+        const template = response.data.data.find((t) => t.name === templateName);
+        if (template) {
+            console.log(`Template Name: ${template.name}`);
+            console.log('Expected Format:');
+            template.components.forEach((component) => {
+                console.log(`- Type: ${component.type}`);
+                if (component.parameters) {
+                    console.log('  Parameters:');
+                    component.parameters.forEach((param, index) => {
+                        console.log(`    ${index + 1}. Type: ${param.type}`);
+                    });
+                }
+            });
+        } else {
+            console.error(`Template "${templateName}" not found.`);
+        }
+    } catch (error) {
+        console.error('Error fetching template details:', error.response?.data || error.message);
+    }
+}
 
 // WhatsApp Webhook to receive messages
-app.post('/api/webhook', asyncHandler(async (req, res) => {
-    const body = req.body;
+app.post(
+    '/api/webhook',
+    asyncHandler(async (req, res) => {
+        const body = req.body;
 
-    if (body.object === 'whatsapp_business_account') {
-        for (const entry of body.entry || []) {
-            for (const change of entry.changes || []) {
-                if (change.field === 'messages' && change.value.messages) {
-                    const messages = change.value.messages;
+        if (body.object === 'whatsapp_business_account') {
+            for (const entry of body.entry || []) {
+                for (const change of entry.changes || []) {
+                    if (change.field === 'messages' && change.value.messages) {
+                        const messages = change.value.messages;
 
-                    for (const message of messages) {
-                        const phoneNumber = normalizePhoneNumber(message.from);
-                        const text = message.text?.body || null;
+                        for (const message of messages) {
+                            const phoneNumber = normalizePhoneNumber(message.from);
+                            const text = message.text?.body || null;
 
-                        console.log(`Received message from ${phoneNumber}: ${text}`);
+                            console.log(`Received message from ${phoneNumber}: ${text}`);
 
-                        // Find or create chat session
-                        let chat = await ChatSession.findOne({ phoneNumber });
-                        if (!chat) chat = new ChatSession({ phoneNumber, messages: [] });
+                            let chat = await ChatSession.findOne({ phoneNumber });
+                            if (!chat) chat = new ChatSession({ phoneNumber, messages: [] });
 
-                        // Add the incoming message to the chat
-                        chat.messages.push({
-                            sender: 'user',
-                            text,
-                            timestamp: new Date(),
-                        });
-
-                        // Save chat with the new message
-                        await chat.save();
-
-                        // Send auto-reply using WhatsApp API
-                        const autoReplyTemplate = {
-                            messaging_product: 'whatsapp',
-                            to: phoneNumber,
-                            type: 'template',
-                            template: {
-                                name: 'greetings',
-                                language: { code: 'en' },
-
-                            },
-                        };
-
-
-
-                        try {
-                            console.log('Sending auto-reply template:', JSON.stringify(autoReplyTemplate, null, 2));
-
-                            const autoReplyResponse = await axios.post(
-                                `https://graph.facebook.com/v17.0/${process.env.PHONE_NUMBER_ID}/messages`,
-                                autoReplyTemplate,
-                                {
-                                    headers: {
-                                        Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
-                                        'Content-Type': 'application/json',
-                                    },
-                                }
-                            );
-
-                            console.log(`Auto-reply sent successfully to ${phoneNumber}:`, JSON.stringify(autoReplyResponse.data, null, 2));
-
-                            // Log the auto-reply in the chat
                             chat.messages.push({
-                                sender: 'system',
-                                text: 'Your auto-reply message here', // Replace with the actual auto-reply text
+                                sender: 'user',
+                                text,
                                 timestamp: new Date(),
                             });
 
                             await chat.save();
-                        } catch (error) {
-                            console.error('Error sending auto-reply:');
 
-                            // Log the request details for debugging
-                            console.error('Request Payload:', JSON.stringify(autoReplyTemplate, null, 2));
+                            const autoReplyTemplate = {
+                                messaging_product: 'whatsapp',
+                                to: phoneNumber,
+                                type: 'template',
+                                template: {
+                                    name: 'greetings',
+                                    language: { code: 'en' },
+                                },
+                            };
 
-                            // Log the full error response from WhatsApp API
-                            if (error.response) {
-                                console.error('Error Response:', {
-                                    status: error.response.status,
-                                    headers: error.response.headers,
-                                    data: error.response.data,
+                            try {
+                                console.log('Sending auto-reply template:', JSON.stringify(autoReplyTemplate, null, 2));
+
+                                const autoReplyResponse = await axios.post(
+                                    `https://graph.facebook.com/v17.0/${process.env.PHONE_NUMBER_ID}/messages`,
+                                    autoReplyTemplate,
+                                    {
+                                        headers: {
+                                            Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
+                                            'Content-Type': 'application/json',
+                                        },
+                                    }
+                                );
+
+                                console.log(`Auto-reply sent successfully to ${phoneNumber}:`, JSON.stringify(autoReplyResponse.data, null, 2));
+
+                                chat.messages.push({
+                                    sender: 'system',
+                                    text: 'Your auto-reply message here',
+                                    timestamp: new Date(),
                                 });
-                            } else {
-                                console.error('Error Message:', error.message);
-                            }
 
-                            // Log specific cases
-                            if (error.response?.data?.error?.details) {
-                                console.error('Error Details:', error.response.data.error.details);
-                            }
+                                await chat.save();
+                            } catch (error) {
+                                console.error('Error sending auto-reply:', error.message);
 
-                            // Retry logic placeholder (optional)
-                            if (error.response?.status === 500) {
-                                console.warn('Retryable error detected. Implement retry logic here if needed.');
+                                console.error('Request Payload:', JSON.stringify(autoReplyTemplate, null, 2));
+
+                                if (error.response) {
+                                    console.error('Error Response:', {
+                                        status: error.response.status,
+                                        headers: error.response.headers,
+                                        data: error.response.data,
+                                    });
+                                }
+
+                                await fetchAndLogTemplateDetails('greetings');
                             }
                         }
-
-
                     }
                 }
             }
+            res.status(200).send('EVENT_RECEIVED');
+        } else {
+            res.sendStatus(404);
         }
-        res.status(200).send('EVENT_RECEIVED');
-    } else {
-        res.sendStatus(404);
-    }
-}));
+    })
+);
 
 // WhatsApp Webhook verification
 app.get('/api/webhook', (req, res) => {
