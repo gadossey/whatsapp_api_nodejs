@@ -179,6 +179,7 @@ app.post('/api/webhook', asyncHandler(async (req, res) => {
 
                                     {
                                         "type": "button",
+                                        "sub_type": "url",
 
                                     },
                                 ]
