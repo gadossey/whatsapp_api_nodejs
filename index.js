@@ -183,6 +183,7 @@ app.post('/api/webhook', asyncHandler(async (req, res) => {
                                         parameters: [
                                             {
                                                 type: 'text',
+                                                text: 'Your dynamic body text here' // Replace with your dynamic content
                                             }
                                         ]
                                     },
@@ -193,6 +194,7 @@ app.post('/api/webhook', asyncHandler(async (req, res) => {
                                         parameters: [
                                             {
                                                 type: 'text',
+                                                text: 'https://example.com' // Replace with your URL
                                             }
                                         ]
                                     }
