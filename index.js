@@ -186,12 +186,7 @@ app.post('/api/webhook', asyncHandler(async (req, res) => {
                                         type: 'button',
                                         sub_type: 'url',
                                         index: '0',
-                                        parameters: [
-                                            {
-                                                type: 'text',
-                                                text: 'https://nsem.com.gh' // Replace with your URL
-                                            }
-                                        ]
+
                                     }
                                 ]
                             },
