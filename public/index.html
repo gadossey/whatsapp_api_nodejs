@@ -13,7 +13,10 @@
     <div class="container">
         <!-- Sidebar for Chat Sessions -->
         <div class="sidebar">
-            <h3>Chat Sessions</h3>
+            <div class="header">
+                <h3>Chats</h3>
+                <button id="newChatBtn" title="Start New Chat">+</button>
+            </div>
             <ul id="chatList">
                 <p style="text-align:center; color: #6c757d;">Loading chats...</p>
             </ul>
@@ -21,17 +24,28 @@
 
         <!-- Chat Area -->
         <div class="chat-area">
-            <h3 id="chatTitle">Select a Chat</h3>
+            <h3 id="chatTitle">Select or Start a Chat</h3>
             <div id="chatMessages" class="messages-container">
                 <p style="text-align:center; color: #6c757d;">No chat selected.</p>
             </div>
             <form id="sendMessageForm" autocomplete="off">
-                <input type="text" id="phone" placeholder="Recipient's phone (e.g., +233123456789)">
+                <input type="text" id="phone" placeholder="Recipient's phone number" readonly>
                 <textarea id="message" placeholder="Type your message..." rows="2"></textarea>
                 <input type="text" id="mediaUrl" placeholder="Media URL (optional)">
                 <button type="submit">Send</button>
             </form>
+        </div>
+    </div>
 
+    <!-- Modal for New Chat -->
+    <div id="newChatModal" class="modal">
+        <div class="modal-content">
+            <span class="close-btn" id="closeModal">&times;</span>
+            <h3>Start New Chat</h3>
+            <form id="newChatForm">
+                <input type="text" id="newPhone" placeholder="Enter phone number (e.g., +233123456789)" required>
+                <button type="submit">Start Chat</button>
+            </form>
         </div>
     </div>
 </body>

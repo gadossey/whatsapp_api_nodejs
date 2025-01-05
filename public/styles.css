@@ -155,3 +155,95 @@ form button {
 form button:hover {
     background-color: #019a88;
 }
+
+/* Sidebar Header */
+.sidebar .header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background-color: #00bfa5;
+    padding: 1rem;
+    color: white;
+}
+
+.sidebar .header button {
+    background-color: white;
+    color: #00bfa5;
+    border: none;
+    border-radius: 50%;
+    width: 36px;
+    height: 36px;
+    font-size: 1.5rem;
+    cursor: pointer;
+    transition: background-color 0.2s;
+}
+
+.sidebar .header button:hover {
+    background-color: #e0f7f5;
+}
+
+/* Modal Styles */
+.modal {
+    display: none;
+    position: fixed;
+    z-index: 1000;
+    left: 0;
+    top: 0;
+    width: 100%;
+    height: 100%;
+    overflow: auto;
+    background-color: rgba(0, 0, 0, 0.5);
+}
+
+.modal-content {
+    background-color: white;
+    margin: 15% auto;
+    padding: 20px;
+    border-radius: 8px;
+    width: 30%;
+    text-align: center;
+    box-shadow: 0 5px 15px rgba(0, 0, 0, 0.3);
+}
+
+.modal-content h3 {
+    margin: 0 0 20px;
+    font-size: 1.5rem;
+}
+
+.modal-content form input {
+    width: 80%;
+    padding: 10px;
+    margin-bottom: 10px;
+    border: 1px solid #ddd;
+    border-radius: 5px;
+}
+
+.modal-content form button {
+    background-color: #00bfa5;
+    color: white;
+    border: none;
+    padding: 10px 20px;
+    border-radius: 5px;
+    cursor: pointer;
+}
+
+.modal-content form button:hover {
+    background-color: #019a88;
+}
+
+.close-btn {
+    float: right;
+    font-size: 1.5rem;
+    cursor: pointer;
+}
+
+/* Hide phone input when chatting */
+form #phone {
+    display: none;
+}
+
+/* Chat title should not display the number */
+#chatTitle {
+    font-size: 1.5rem;
+    font-weight: bold;
+}

@@ -120,5 +120,34 @@ document.getElementById('sendMessageForm').addEventListener('submit', async (e) 
     }
 });
 
+document.getElementById('newChatBtn').addEventListener('click', () => {
+    document.getElementById('newChatModal').style.display = 'block';
+});
+
+document.getElementById('closeModal').addEventListener('click', () => {
+    document.getElementById('newChatModal').style.display = 'none';
+});
+
+// Start a new chat
+document.getElementById('newChatForm').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const newPhoneInput = document.getElementById('newPhone');
+    const newPhoneNumber = newPhoneInput.value.trim();
+
+    if (!newPhoneNumber) {
+        alert('Please enter a valid phone number.');
+        return;
+    }
+
+    currentPhoneNumber = newPhoneNumber;
+    document.getElementById('phone').value = newPhoneNumber;
+    document.getElementById('chatTitle').textContent = `Chat with ${newPhoneNumber}`;
+    document.getElementById('chatMessages').innerHTML = '<p style="text-align:center; color: #6c757d;">No messages yet. Start the conversation!</p>';
+
+    // Hide modal and clear input
+    document.getElementById('newChatModal').style.display = 'none';
+    newPhoneInput.value = '';
+});
+
 // Initialize
 fetchChats();
