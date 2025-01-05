@@ -165,7 +165,7 @@ app.post('/api/webhook', asyncHandler(async (req, res) => {
                             type: 'template',
                             template: {
                                 name: 'nsem_ghana_mit',
-                                language: { code: 'en_US' },
+                                language: { code: 'en' },
                                 components: [
 
                                     {
