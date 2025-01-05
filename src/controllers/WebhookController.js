@@ -7,80 +7,86 @@ class WebhookController {
         const token = req.query['hub.verify_token'];
         const challenge = req.query['hub.challenge'];
 
-        console.log('Received mode:', mode);
-        console.log('Received token:', token);
-        console.log('Expected token:', process.env.VERIFY_TOKEN);
+        console.log('Webhook verification request received');
+        console.log(`Mode: ${mode}, Token: ${token}`);
 
         if (mode === 'subscribe' && token === process.env.VERIFY_TOKEN) {
-            console.log('Webhook verified successfully');
+            console.log('Webhook verified successfully.');
             res.status(200).send(challenge); // Respond with the challenge
         } else {
-            console.error('Webhook verification failed. Check token or mode.');
+            console.error('Webhook verification failed.');
             res.status(403).send('Verification failed');
         }
     }
-
-
 
     // Handle incoming messages
     static async handleWebhook(req, res) {
         const body = req.body;
 
-        console.log('Webhook payload:', JSON.stringify(body, null, 2));
+        console.log('Received webhook payload:');
+        console.log(JSON.stringify(body, null, 2));
 
-        if (body.object === 'whatsapp_business_account') {
+        // Check if this is a WhatsApp event
+        if (body.object !== 'whatsapp_business_account') {
+            console.error('Not a WhatsApp event');
+            return res.sendStatus(404); // Not a WhatsApp event
+        }
+
+        try {
+            const updatePromises = [];
+
+            // Process each entry in the webhook body
             for (const entry of body.entry || []) {
+                console.log('Processing entry:', entry);
                 for (const change of entry.changes || []) {
-                    if (change.field === 'messages' && change.value.statuses) {
-                        const statuses = change.value.statuses;
-
-                        if (Array.isArray(statuses)) {
-                            for (const status of statuses) {
-                                console.log(`Status update: Message ID ${status.id} is ${status.status}`);
-                                // You can log or process status updates here.
-                            }
-                        } else {
-                            console.error('Invalid statuses format:', statuses);
-                        }
-                    } else if (change.field === 'messages' && change.value.messages) {
+                    console.log('Processing change:', change);
+                    if (change.field === 'messages' && change.value.messages) {
                         const messages = change.value.messages;
+                        console.log(`Received ${messages.length} messages`);
 
-                        if (Array.isArray(messages)) {
-                            for (const message of messages) {
-                                const phoneNumber = message.from;
-                                const text = message.text?.body || null;
+                        // Process each message
+                        messages.forEach((message) => {
+                            const phoneNumber = message.from;
+                            const text = message.text?.body || null;
+                            const mediaUrl = message.image?.link || null;
 
-                                // Save received message to database
-                                await ChatSession.findOneAndUpdate(
-                                    { phoneNumber },
-                                    {
-                                        $push: {
-                                            messages: {
-                                                phoneNumber,
-                                                message: text,
-                                                sentBy: 'system',
-                                            },
+                            console.log(`Processing message from ${phoneNumber}`);
+                            console.log(`Text: ${text}`);
+                            console.log(`Media URL: ${mediaUrl}`);
+
+                            // Save received message to database
+                            const updatePromise = ChatSession.findOneAndUpdate(
+                                { phoneNumber },
+                                {
+                                    $push: {
+                                        messages: {
+                                            text, // Use `text` instead of `message`
+                                            mediaUrl,
+                                            sentBy: 'system',
+                                            timestamp: new Date(),
                                         },
                                     },
-                                    { upsert: true }
-                                );
+                                },
+                                { upsert: true, new: true }
+                            );
+                            updatePromises.push(updatePromise);
 
-                                console.log(`Message received from ${phoneNumber}: ${text}`);
-                            }
-                        } else {
-                            console.error('Invalid messages format:', messages);
-                        }
+                            console.log(`Message processed for ${phoneNumber}`);
+                        });
                     }
                 }
             }
 
+            // Wait for all updates to complete
+            await Promise.all(updatePromises);
+
+            console.log('All messages processed successfully');
             res.status(200).send('EVENT_RECEIVED');
-        } else {
-            res.sendStatus(404);
+        } catch (error) {
+            console.error('Error processing webhook:', error);
+            res.status(500).send('Internal Server Error');
         }
     }
-
-
 }
 
 module.exports = WebhookController;

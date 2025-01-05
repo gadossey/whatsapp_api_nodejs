@@ -1,12 +1,12 @@
 /* General Styles */
 body {
-    font-family: Arial, sans-serif;
+    font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
     margin: 0;
     padding: 0;
     display: flex;
     height: 100vh;
     overflow: hidden;
-    background-color: #f8f9fa;
+    background-color: #eae6df;
 }
 
 .container {
@@ -17,17 +17,20 @@ body {
 
 /* Sidebar Styles */
 .sidebar {
-    width: 25%;
+    width: 30%;
     background-color: #ffffff;
-    padding: 1em;
-    border-right: 1px solid #dee2e6;
-    box-shadow: 2px 0 5px rgba(0, 0, 0, 0.1);
+    border-right: 1px solid #ddd;
+    display: flex;
+    flex-direction: column;
+    padding: 0;
 }
 
 .sidebar h3 {
-    margin: 0 0 1em;
-    font-size: 1.25em;
-    color: #343a40;
+    padding: 1rem;
+    margin: 0;
+    background-color: #00bfa5;
+    color: white;
+    font-size: 1.2rem;
 }
 
 #chatList {
@@ -35,22 +38,25 @@ body {
     padding: 0;
     margin: 0;
     overflow-y: auto;
-    max-height: calc(100vh - 80px);
+    flex-grow: 1;
+    background-color: #f5f5f5;
 }
 
 #chatList li {
-    padding: 0.75em 1em;
-    border-bottom: 1px solid #dee2e6;
+    display: flex;
+    align-items: center;
+    padding: 0.8rem 1rem;
     cursor: pointer;
-    transition: background-color 0.3s;
+    transition: background-color 0.2s;
+    border-bottom: 1px solid #ddd;
 }
 
 #chatList li:hover {
-    background-color: #e9ecef;
+    background-color: #ebebeb;
 }
 
 #chatList li.active {
-    background-color: #ced4da;
+    background-color: #d1f7f5;
 }
 
 /* Chat Area Styles */
@@ -58,102 +64,94 @@ body {
     flex-grow: 1;
     display: flex;
     flex-direction: column;
-    padding: 1em;
-    background-color: #ffffff;
+    background-color: #efeae2;
 }
 
 #chatTitle {
-    margin: 0 0 1em;
-    font-size: 1.5em;
-    color: #495057;
-    border-bottom: 2px solid #dee2e6;
-    padding-bottom: 0.5em;
+    padding: 1rem;
+    background-color: #00bfa5;
+    color: white;
+    font-size: 1.2rem;
+    margin: 0;
 }
 
 #chatMessages {
     flex-grow: 1;
     overflow-y: auto;
-    padding: 1em;
-    border: 1px solid #dee2e6;
-    border-radius: 5px;
-    background-color: #f8f9fa;
-    margin-bottom: 1em;
+    padding: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.5rem;
+    background-color: #e5ddd5;
 }
 
-#chatMessages div {
-    margin-bottom: 1em;
+.sent {
+    align-self: flex-end;
+    background-color: #dcf8c6;
+    color: #000;
+    padding: 0.8rem;
+    border-radius: 8px 8px 0 8px;
+    max-width: 60%;
+    word-wrap: break-word;
+    position: relative;
 }
 
-.user-message {
-    background-color: #d4f1c5;
-    padding: 0.75em;
-    border-radius: 8px;
-    margin-left: auto;
-    width: fit-content;
-    max-width: 70%;
-}
-
-.system-message {
-    background-color: #e9ecef;
-    padding: 0.75em;
-    border-radius: 8px;
-    width: fit-content;
-    max-width: 70%;
+.received {
+    align-self: flex-start;
+    background-color: #fff;
+    padding: 0.8rem;
+    border-radius: 8px 8px 8px 0;
+    max-width: 60%;
+    word-wrap: break-word;
+    position: relative;
 }
 
 .timestamp {
     font-size: 0.75em;
-    color: #6c757d;
-    display: block;
+    color: #999;
     margin-top: 0.5em;
+    text-align: right;
 }
 
-/* Form Styles */
 form {
     display: flex;
-    flex-direction: column;
-    gap: 0.75em;
+    align-items: center;
+    padding: 1rem;
+    background-color: #ffffff;
+    border-top: 1px solid #ddd;
 }
 
 form input,
-form textarea,
-form button {
-    font-size: 1em;
-    padding: 0.5em;
-    border: 1px solid #ced4da;
-    border-radius: 5px;
+form textarea {
+    font-size: 1rem;
+    padding: 0.75rem;
+    border: 1px solid #ddd;
+    border-radius: 20px;
+    flex: 1;
+    margin-right: 1rem;
+    outline: none;
+}
+
+form textarea {
+    resize: none;
+    height: 40px;
 }
 
 form button {
-    background-color: #007bff;
-    color: #fff;
+    padding: 0.75rem 1.5rem;
     border: none;
+    background-color: #00bfa5;
+    color: white;
+    font-size: 1rem;
+    border-radius: 50%;
     cursor: pointer;
-    transition: background-color 0.3s ease;
+    outline: none;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    transition: background-color 0.2s;
 }
 
 form button:hover {
-    background-color: #0056b3;
-}
-
-textarea {
-    resize: none;
-}
-
-/* Responsive Styles */
-@media (max-width: 768px) {
-    .container {
-        flex-direction: column;
-    }
-
-    .sidebar {
-        width: 100%;
-        border-right: none;
-        border-bottom: 1px solid #dee2e6;
-        box-shadow: none;
-    }
-
-    #chatMessages {
-        max-height: 50vh;
-    }
+    background-color: #019a88;
 }
