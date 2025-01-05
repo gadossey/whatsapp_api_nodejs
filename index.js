@@ -170,12 +170,7 @@ app.post('/api/webhook', asyncHandler(async (req, res) => {
                                 "components": [
                                     {
                                         "type": "header",
-                                        "parameters": [
-                                            {
-                                                "type": "image",
 
-                                            }
-                                        ]
                                     },
                                     {
                                         "type": "body",
