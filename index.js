@@ -164,7 +164,7 @@ app.post('/api/webhook', asyncHandler(async (req, res) => {
                             to: phoneNumber,
                             type: 'template',
                             template: {
-                                name: 'newghanaline',
+                                name: 'main_final_ghana',
                                 language: { code: 'en_US' },
                                 components: [
                                     {
