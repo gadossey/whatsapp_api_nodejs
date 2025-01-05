@@ -168,6 +168,12 @@ app.post('/api/webhook', asyncHandler(async (req, res) => {
                                 language: { code: 'en_US' },
                                 components: [
                                     {
+                                        type: 'header',
+                                        parameters: [
+                                            { type: 'text', text: 'Afenhyia Pa o!' },
+                                        ],
+                                    },
+                                    {
                                         type: 'body',
                                         parameters: [
                                             { type: 'text', text: 'Vico' },
@@ -176,6 +182,7 @@ app.post('/api/webhook', asyncHandler(async (req, res) => {
                                 ],
                             },
                         };
+
 
                         try {
                             const autoReplyResponse = await axios.post(
