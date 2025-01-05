@@ -6,33 +6,114 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>WhatsApp Dashboard</title>
     <link rel="stylesheet" href="styles.css">
-    <script src="scripts.js" defer></script>
 </head>
 
 <body>
     <div class="container">
-        <!-- Sidebar for Chat Sessions -->
         <div class="sidebar">
             <h3>Chat Sessions</h3>
-            <ul id="chatList">
-                <p style="text-align:center; color: #6c757d;">Loading chats...</p>
-            </ul>
+            <ul id="chatList"></ul>
         </div>
 
-        <!-- Chat Area -->
         <div class="chat-area">
             <h3 id="chatTitle">Select a Chat</h3>
-            <div id="chatMessages" class="messages-container">
-                <p style="text-align:center; color: #6c757d;">No chat selected.</p>
-            </div>
+            <div id="chatMessages"></div>
             <form id="sendMessageForm" autocomplete="off">
-                <input type="text" id="phone" placeholder="Recipient's phone (e.g., +233123456789)" readonly>
+                <input type="text" id="phone" placeholder="Recipient's phone (e.g., +233123456789)" required>
                 <textarea id="message" placeholder="Type your message..." rows="2"></textarea>
-                <input type="text" id="mediaUrl" placeholder="Media URL (optional)">
                 <button type="submit">Send</button>
             </form>
         </div>
     </div>
+
+    <script>
+        let currentPhoneNumber = null;
+
+        // Fetch and display chat sessions
+        async function fetchChats() {
+            try {
+                const response = await fetch('/api/chats');
+                const chats = await response.json();
+                const chatList = document.getElementById('chatList');
+                chatList.innerHTML = '';
+
+                chats.forEach(chat => {
+                    const listItem = document.createElement('li');
+                    listItem.textContent = chat.phoneNumber;
+                    listItem.onclick = () => loadChat(chat.phoneNumber);
+                    chatList.appendChild(listItem);
+                });
+            } catch (error) {
+                console.error('Error fetching chats:', error);
+            }
+        }
+
+        // Load messages for a specific chat
+        async function loadChat(phoneNumber) {
+            currentPhoneNumber = phoneNumber;
+
+            try {
+                const response = await fetch(`/api/chat/${phoneNumber}`);
+                const chat = await response.json();
+
+                const chatTitle = document.getElementById('chatTitle');
+                const chatMessages = document.getElementById('chatMessages');
+                chatTitle.textContent = `Chat with ${phoneNumber}`;
+                chatMessages.innerHTML = '';
+
+                chat.messages.forEach(msg => {
+                    const messageDiv = document.createElement('div');
+                    messageDiv.className = msg.sender === 'you' ? 'sent' : 'received';
+                    messageDiv.innerHTML = `
+                        ${msg.text || `<img src="${msg.mediaUrl}" alt="Media" />`}
+                        <div class="timestamp">${new Date(msg.timestamp).toLocaleString()}</div>
+                    `;
+                    chatMessages.appendChild(messageDiv);
+                });
+
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+            } catch (error) {
+                console.error('Error loading chat:', error);
+            }
+        }
+
+        // Send a message
+        document.getElementById('sendMessageForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const phone = document.getElementById('phone').value;
+            const message = document.getElementById('message').value;
+
+            if (!phone && !currentPhoneNumber) {
+                alert('Please enter a phone number or select a chat.');
+                return;
+            }
+
+            const phoneNumber = currentPhoneNumber || phone;
+
+            try {
+                const response = await fetch('/api/send-message', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ phoneNumber, message }),
+                });
+
+                const data = await response.json();
+
+                if (data.message === 'Message sent successfully') {
+                    loadChat(phoneNumber);
+                    document.getElementById('message').value = '';
+                } else {
+                    alert('Failed to send message.');
+                }
+            } catch (error) {
+                console.error('Error sending message:', error);
+            }
+        });
+
+        // Initialize
+        fetchChats();
+    </script>
 </body>
 
 </html>

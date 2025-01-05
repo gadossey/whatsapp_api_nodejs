@@ -2,7 +2,7 @@ const mongoose = require('mongoose');
 
 const chatSchema = new mongoose.Schema(
     {
-        phoneNumber: { type: String, required: true, unique: true, index: true },
+        phoneNumber: { type: String, required: true },
         messages: [
             {
                 message: { type: String },
