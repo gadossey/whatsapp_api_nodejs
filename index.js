@@ -180,12 +180,7 @@ app.post('/api/webhook', asyncHandler(async (req, res) => {
                                     },
                                     {
                                         type: 'body',
-                                        parameters: [
-                                            {
-                                                type: 'text',
-                                                text: 'Hello! Welcome to our service. How can we help you today?', // Replace with your message
-                                            },
-                                        ],
+
                                     },
                                     {
                                         type: 'button',
