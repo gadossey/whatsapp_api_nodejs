@@ -166,13 +166,7 @@ app.post('/api/webhook', asyncHandler(async (req, res) => {
                             template: {
                                 name: 'greetings',
                                 language: { code: 'en' },
-                                components: [
 
-                                    {
-                                        type: 'body',
-
-                                    },
-                                ],
                             },
                         };
 
