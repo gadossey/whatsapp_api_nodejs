@@ -164,26 +164,15 @@ app.post('/api/webhook', asyncHandler(async (req, res) => {
                             to: phoneNumber,
                             type: 'template',
                             template: {
-                                name: 'greetings',
+                                name: 'nsem_ghana_mit',
                                 language: { code: 'en' },
-
-                                "components": [
-                                    {
-                                        "type": "header",
-
-                                    },
-                                    {
-                                        "type": "body",
-
-                                    },
+                                components: [
 
                                     {
-                                        "type": "button",
-                                        "sub_type": "url",
-                                        "index": "0",
+                                        type: 'body',
 
                                     },
-                                ]
+                                ],
                             },
                         };
 
