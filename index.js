@@ -71,127 +71,8 @@ function asyncHandler(fn) {
 // Serve static files
 app.use(express.static(path.join(__dirname, 'public')));
 
-// Route to fetch all chat sessions
-app.get('/api/chats', asyncHandler(async (req, res) => {
-    const chats = await ChatSession.find().sort({ updatedAt: -1 });
-    res.json(chats);
-}));
-
-// Route to fetch a specific chat
-app.get('/api/chat/:phoneNumber', asyncHandler(async (req, res) => {
-    const { phoneNumber } = req.params;
-    const normalizedNumber = normalizePhoneNumber(phoneNumber);
-    if (!normalizedNumber) return res.status(400).json({ message: 'Invalid phone number' });
-
-    const chat = await ChatSession.findOne({ phoneNumber: normalizedNumber });
-    if (!chat) return res.status(404).json({ message: 'Chat not found' });
-
-    chat.messages.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-    res.json(chat);
-}));
-
-// Route to send a message
-app.post('/api/send-message', asyncHandler(async (req, res) => {
-    const { phoneNumber, message, mediaUrl } = req.body;
-    if (!phoneNumber || (!message && !mediaUrl)) {
-        return res.status(400).json({ message: 'Phone number and message or media URL are required' });
-    }
-
-    const normalizedNumber = normalizePhoneNumber(phoneNumber);
-    if (!normalizedNumber) return res.status(400).json({ message: 'Invalid phone number' });
-
-    // Send message via WhatsApp Business API
-    await axios.post(
-        `https://graph.facebook.com/v17.0/${process.env.PHONE_NUMBER_ID}/messages`,
-        {
-            messaging_product: 'whatsapp',
-            to: normalizedNumber,
-            type: mediaUrl ? 'image' : 'text',
-            ...(mediaUrl ? { image: { link: mediaUrl } } : { text: { body: message } }),
-        },
-        {
-            headers: {
-                Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
-                'Content-Type': 'application/json',
-            },
-        }
-    );
-
-    // Save message in DB
-    let chat = await ChatSession.findOne({ phoneNumber: normalizedNumber });
-    if (!chat) chat = new ChatSession({ phoneNumber: normalizedNumber, messages: [] });
-
-    chat.messages.push({
-        sender: 'you',
-        text: message || '',
-        mediaUrl: mediaUrl || null,
-        timestamp: new Date(),
-    });
-    await chat.save();
-
-    res.json({ message: 'Message sent successfully', chat });
-}));
-
-// WhatsApp Webhook to receive messages
-// WhatsApp Webhook to receive messages
-app.post('/api/webhook', asyncHandler(async (req, res) => {
-    const body = req.body;
-
-    if (body.object === 'whatsapp_business_account') {
-        for (const entry of body.entry || []) {
-            for (const change of entry.changes || []) {
-                if (change.field === 'messages' && change.value.messages) {
-                    const messages = change.value.messages;
-
-                    for (const message of messages) {
-                        const phoneNumber = normalizePhoneNumber(message.from);
-                        const text = message.text?.body || null;
-
-                        console.log(`Received message from ${phoneNumber}: ${text}`);
-
-                        let chat = await ChatSession.findOne({ phoneNumber });
-                        if (!chat) {
-                            // If chat does not exist, create a new one
-                            chat = new ChatSession({ phoneNumber, messages: [] });
-                            await chat.save();
-
-                            // Send an interactive message when a new chat is created
-                            await sendWhatsAppInteractiveMessage(phoneNumber);
-                        }
-
-                        // Mark the sender as 'user' for received messages
-                        chat.messages.push({
-                            sender: 'user', // this is the key part
-                            text,
-                            timestamp: new Date(),
-                        });
-                        await chat.save();
-                    }
-                }
-            }
-        }
-        res.status(200).send('EVENT_RECEIVED');
-    } else {
-        res.sendStatus(404);
-    }
-}));
-
-
-// WhatsApp Webhook verification
-app.get('/api/webhook', (req, res) => {
-    const mode = req.query['hub.mode'];
-    const token = req.query['hub.verify_token'];
-    const challenge = req.query['hub.challenge'];
-
-    if (mode === 'subscribe' && token === process.env.VERIFY_TOKEN) {
-        res.status(200).send(challenge);
-    } else {
-        res.status(403).send('Verification failed');
-    }
-});
-
-// Send WhatsApp Interactive Message
-async function sendWhatsAppInteractiveMessage(phoneNumber) {
+// Route to send the initial greeting message with interactive buttons
+async function sendWhatsAppGreeting(phoneNumber) {
     const interactiveMessage = {
         messaging_product: 'whatsapp',
         to: phoneNumber,
@@ -227,11 +108,92 @@ async function sendWhatsAppInteractiveMessage(phoneNumber) {
     }
 }
 
-// Central error handling middleware
-app.use((err, req, res, next) => {
-    console.error(err.stack);
-    res.status(500).json({ message: 'Internal Server Error', error: err.message });
+// Webhook to process incoming button click
+app.post('/api/webhook', asyncHandler(async (req, res) => {
+    const body = req.body;
+
+    if (body.object === 'whatsapp_business_account') {
+        for (const entry of body.entry || []) {
+            for (const change of entry.changes || []) {
+                if (change.field === 'messages') {
+                    const messages = change.value.messages;
+
+                    for (const message of messages) {
+                        const phoneNumber = normalizePhoneNumber(message.from);
+                        const interactiveResponse = message.interactive?.button?.id; // Capture the button ID
+
+                        console.log(`Received message from ${phoneNumber}`);
+                        console.log('Interactive response:', interactiveResponse);
+
+                        let responseMessage = '';
+
+                        // Handle button click actions
+                        switch (interactiveResponse) {
+                            case 'account_assistance':
+                                responseMessage = 'You selected Account Assistance. How can I assist with your account?';
+                                break;
+                            case 'services_pricing':
+                                responseMessage = 'You selected Services & Pricing. Let me provide details about our services and pricing.';
+                                break;
+                            case 'speak_to_rep':
+                                responseMessage = 'You selected to speak to a Representative. Please hold on while I connect you.';
+                                // Optional: Here, you can initiate connecting to a live representative
+                                break;
+                            default:
+                                responseMessage = 'Sorry, I didn’t recognize that option.';
+                                break;
+                        }
+
+                        // Send the response based on user input
+                        await sendWhatsAppTextMessage(phoneNumber, responseMessage);
+                    }
+                }
+            }
+        }
+        res.status(200).send('EVENT_RECEIVED');
+    } else {
+        res.sendStatus(404);
+    }
+}));
+
+// WhatsApp Webhook verification
+app.get('/api/webhook', (req, res) => {
+    const mode = req.query['hub.mode'];
+    const token = req.query['hub.verify_token'];
+    const challenge = req.query['hub.challenge'];
+
+    if (mode === 'subscribe' && token === process.env.VERIFY_TOKEN) {
+        res.status(200).send(challenge);
+    } else {
+        res.status(403).send('Verification failed');
+    }
 });
+
+// Function to send a simple text message to WhatsApp
+async function sendWhatsAppTextMessage(phoneNumber, message) {
+    const responsePayload = {
+        messaging_product: 'whatsapp',
+        to: phoneNumber,
+        type: 'text',
+        text: { body: message },
+    };
+
+    try {
+        const response = await axios.post(
+            `https://graph.facebook.com/v17.0/${process.env.PHONE_NUMBER_ID}/messages`,
+            responsePayload,
+            {
+                headers: {
+                    Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
+                    'Content-Type': 'application/json',
+                }
+            }
+        );
+        console.log('Message sent:', response.data);
+    } catch (error) {
+        console.error('Error sending message:', error.response?.data || error.message);
+    }
+}
 
 // Start server
 const port = process.env.PORT || 3000;
