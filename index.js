@@ -6,6 +6,7 @@ const path = require('path');
 const axios = require('axios');
 const helmet = require('helmet');
 const morgan = require('morgan');
+const { parsePhoneNumberFromString } = require('libphonenumber-js');
 
 // Validate required environment variables
 const requiredEnvVars = ['MONGO_URI', 'PHONE_NUMBER_ID', 'WHATSAPP_TOKEN', 'VERIFY_TOKEN', 'PORT'];
@@ -46,171 +47,84 @@ const chatSessionSchema = new mongoose.Schema({
 
 const ChatSession = mongoose.model('ChatSession', chatSessionSchema);
 
-// Utility to normalize phone numbers
-const DEFAULT_COUNTRY_CODE = '+233';
+// Normalize phone numbers
+const DEFAULT_COUNTRY_CODE = 'GH';
 function normalizePhoneNumber(phone) {
     if (!phone) return null;
-    phone = phone.trim();
-    if (phone.startsWith('+')) return phone;
-    if (phone.startsWith(DEFAULT_COUNTRY_CODE.replace('+', ''))) return `+${phone}`;
-    if (phone.startsWith('0')) return DEFAULT_COUNTRY_CODE + phone.substring(1);
-    return DEFAULT_COUNTRY_CODE + phone;
+    const parsedNumber = parsePhoneNumberFromString(phone.trim(), DEFAULT_COUNTRY_CODE);
+    return parsedNumber && parsedNumber.isValid() ? parsedNumber.format('E.164') : null;
 }
 
-// Middleware for error handling
-function asyncHandler(fn) {
-    return (req, res, next) => {
-        Promise.resolve(fn(req, res, next)).catch(next);
-    };
-}
-
-// Serve static files
-app.use(express.static(path.join(__dirname, 'public')));
-
-// Route to fetch all chat sessions
-app.get('/api/chats', asyncHandler(async (req, res) => {
-    const chats = await ChatSession.find().sort({ updatedAt: -1 });
-    res.json(chats);
-}));
-
-// Route to fetch a specific chat
-app.get('/api/chat/:phoneNumber', asyncHandler(async (req, res) => {
-    const { phoneNumber } = req.params;
-    const normalizedNumber = normalizePhoneNumber(phoneNumber);
-    if (!normalizedNumber) return res.status(400).json({ message: 'Invalid phone number' });
-
-    const chat = await ChatSession.findOne({ phoneNumber: normalizedNumber });
-    if (!chat) return res.status(404).json({ message: 'Chat not found' });
-
-    chat.messages.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-    res.json(chat);
-}));
-
-// Route to send a message
-app.post('/api/send-message', asyncHandler(async (req, res) => {
-    const { phoneNumber, message, mediaUrl } = req.body;
-    if (!phoneNumber || (!message && !mediaUrl)) {
-        return res.status(400).json({ message: 'Phone number and message or media URL are required' });
-    }
-
-    const normalizedNumber = normalizePhoneNumber(phoneNumber);
-    if (!normalizedNumber) return res.status(400).json({ message: 'Invalid phone number' });
-
-    // Send message via WhatsApp Business API
-    await axios.post(
-        `https://graph.facebook.com/v17.0/${process.env.PHONE_NUMBER_ID}/messages`,
-        {
-            messaging_product: 'whatsapp',
-            to: normalizedNumber,
-            type: mediaUrl ? 'image' : 'text',
-            ...(mediaUrl ? { image: { link: mediaUrl } } : { text: { body: message } }),
-        },
-        {
-            headers: {
-                Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
-                'Content-Type': 'application/json',
+// Send WhatsApp interactive greeting
+async function sendWhatsAppGreeting(phoneNumber) {
+    const interactiveMessage = {
+        messaging_product: 'whatsapp',
+        to: phoneNumber,
+        type: 'interactive',
+        interactive: {
+            type: 'button',
+            header: { type: 'text', text: 'Hi! I am Vico, your assistant. How may I help you today?' },
+            body: { text: 'Choose an option below:' },
+            action: {
+                buttons: [
+                    { type: 'reply', reply: { id: 'account_assistance', title: '1️⃣ Account Assistance' } },
+                    { type: 'reply', reply: { id: 'services_pricing', title: '2️⃣ Services & Pricing' } },
+                    { type: 'reply', reply: { id: 'speak_to_rep', title: '3️⃣ Speak to a Representative' } },
+                ],
             },
-        }
-    );
+        },
+    };
 
-    // Save message in DB
-    let chat = await ChatSession.findOne({ phoneNumber: normalizedNumber });
-    if (!chat) chat = new ChatSession({ phoneNumber: normalizedNumber, messages: [] });
+    try {
+        const response = await axios.post(
+            `https://graph.facebook.com/v17.0/${process.env.PHONE_NUMBER_ID}/messages`,
+            interactiveMessage,
+            {
+                headers: {
+                    Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
+                    'Content-Type': 'application/json',
+                },
+            }
+        );
+        console.log('Interactive greeting sent:', response.data);
+    } catch (error) {
+        console.error('Error sending greeting:', error.response?.data || error.message);
+    }
+}
 
-    chat.messages.push({
-        sender: 'you',
-        text: message || '',
-        mediaUrl: mediaUrl || null,
-        timestamp: new Date(),
-    });
-    await chat.save();
-
-    res.json({ message: 'Message sent successfully', chat });
-}));
-
-// WhatsApp Webhook to receive messages
-app.post('/api/webhook', asyncHandler(async (req, res) => {
+// Webhook to process interactive responses
+app.post('/api/webhook', async (req, res) => {
     const body = req.body;
 
     if (body.object === 'whatsapp_business_account') {
         for (const entry of body.entry || []) {
             for (const change of entry.changes || []) {
-                if (change.field === 'messages' && change.value.messages) {
+                if (change.field === 'messages') {
                     const messages = change.value.messages;
 
                     for (const message of messages) {
                         const phoneNumber = normalizePhoneNumber(message.from);
-                        const text = message.text?.body || null;
+                        const buttonResponse = message.interactive?.button?.id;
 
-                        console.log(`Received message from ${phoneNumber}: ${text}`);
+                        if (buttonResponse) {
+                            console.log(`User chose: ${buttonResponse}`);
 
-                        // Find or create chat session
-                        let chat = await ChatSession.findOne({ phoneNumber });
-                        if (!chat) chat = new ChatSession({ phoneNumber, messages: [] });
+                            let replyMessage = '';
+                            switch (buttonResponse) {
+                                case 'account_assistance':
+                                    replyMessage = 'You selected Account Assistance. How can I help with your account?';
+                                    break;
+                                case 'services_pricing':
+                                    replyMessage = 'You selected Services & Pricing. Here are our options...';
+                                    break;
+                                case 'speak_to_rep':
+                                    replyMessage = 'You selected to speak with a representative. Connecting you...';
+                                    break;
+                                default:
+                                    replyMessage = 'Sorry, I didn’t understand your response.';
+                            }
 
-                        // Add the incoming message to the chat
-                        chat.messages.push({
-                            sender: 'user',
-                            text,
-                            timestamp: new Date(),
-                        });
-
-                        // Save chat with the new message
-                        await chat.save();
-
-                        // Send auto-reply using WhatsApp API
-                        const autoReplyTemplate = {
-                            messaging_product: 'whatsapp',
-                            to: phoneNumber,
-                            type: 'template',
-                            template: {
-                                name: 'greetings',
-                                language: { code: 'en' },
-
-                                "components": [
-                                    {
-                                        "type": "header",
-
-                                    },
-                                    {
-                                        "type": "body",
-
-                                    },
-
-                                    {
-                                        "type": "button",
-                                        "sub_type": "url",
-                                        "index": "0",
-
-                                    },
-                                ]
-                            },
-                        };
-
-
-                        try {
-                            const autoReplyResponse = await axios.post(
-                                `https://graph.facebook.com/v17.0/${process.env.PHONE_NUMBER_ID}/messages`,
-                                autoReplyTemplate,
-                                {
-                                    headers: {
-                                        Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
-                                        'Content-Type': 'application/json',
-                                    },
-                                }
-                            );
-                            console.log(`Auto-reply sent to ${phoneNumber}:`, autoReplyResponse.data);
-
-                            // Log the auto-reply in the chat
-                            chat.messages.push({
-                                sender: 'system',
-                                text: 'Your auto-reply message here', // Replace with the actual auto-reply text
-                                timestamp: new Date(),
-                            });
-
-                            await chat.save();
-                        } catch (error) {
-                            console.error('Error sending auto-reply:', error.response?.data || error.message);
+                            await sendWhatsAppTextMessage(phoneNumber, replyMessage);
                         }
                     }
                 }
@@ -220,9 +134,35 @@ app.post('/api/webhook', asyncHandler(async (req, res) => {
     } else {
         res.sendStatus(404);
     }
-}));
+});
 
-// WhatsApp Webhook verification
+// Function to send a simple WhatsApp text message
+async function sendWhatsAppTextMessage(phoneNumber, message) {
+    const messagePayload = {
+        messaging_product: 'whatsapp',
+        to: phoneNumber,
+        type: 'text',
+        text: { body: message },
+    };
+
+    try {
+        const response = await axios.post(
+            `https://graph.facebook.com/v17.0/${process.env.PHONE_NUMBER_ID}/messages`,
+            messagePayload,
+            {
+                headers: {
+                    Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
+                    'Content-Type': 'application/json',
+                },
+            }
+        );
+        console.log('Message sent:', response.data);
+    } catch (error) {
+        console.error('Error sending message:', error.response?.data || error.message);
+    }
+}
+
+// Webhook verification
 app.get('/api/webhook', (req, res) => {
     const mode = req.query['hub.mode'];
     const token = req.query['hub.verify_token'];
@@ -233,12 +173,6 @@ app.get('/api/webhook', (req, res) => {
     } else {
         res.status(403).send('Verification failed');
     }
-});
-
-// Central error handling middleware
-app.use((err, req, res, next) => {
-    console.error(err.stack);
-    res.status(500).json({ message: 'Internal Server Error', error: err.message });
 });
 
 // Start server
