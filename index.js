@@ -133,6 +133,7 @@ app.post('/api/send-message', asyncHandler(async (req, res) => {
 }));
 
 // WhatsApp Webhook to receive messages
+// WhatsApp Webhook to receive messages
 app.post('/api/webhook', asyncHandler(async (req, res) => {
     const body = req.body;
 
@@ -149,7 +150,14 @@ app.post('/api/webhook', asyncHandler(async (req, res) => {
                         console.log(`Received message from ${phoneNumber}: ${text}`);
 
                         let chat = await ChatSession.findOne({ phoneNumber });
-                        if (!chat) chat = new ChatSession({ phoneNumber, messages: [] });
+                        if (!chat) {
+                            // If chat does not exist, create a new one
+                            chat = new ChatSession({ phoneNumber, messages: [] });
+                            await chat.save();
+
+                            // Send an interactive message when a new chat is created
+                            await sendWhatsAppInteractiveMessage(phoneNumber);
+                        }
 
                         // Mark the sender as 'user' for received messages
                         chat.messages.push({
@@ -167,6 +175,7 @@ app.post('/api/webhook', asyncHandler(async (req, res) => {
         res.sendStatus(404);
     }
 }));
+
 
 // WhatsApp Webhook verification
 app.get('/api/webhook', (req, res) => {
