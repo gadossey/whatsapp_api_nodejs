@@ -43,6 +43,7 @@ const chatSessionSchema = new mongoose.Schema(
                 timestamp: { type: Date, default: Date.now },
             },
         ],
+        canChatNormally: { type: Boolean, default: false }, // Added to track normal chat state
     },
     { timestamps: true }
 );
@@ -140,39 +141,6 @@ app.post(
     })
 );
 
-// Utility to fetch and log template details
-async function fetchAndLogTemplateDetails(templateName) {
-    try {
-        const response = await axios.get(
-            `https://graph.facebook.com/v17.0/${process.env.PHONE_NUMBER_ID}/message_templates`,
-            {
-                headers: {
-                    Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
-                },
-            }
-        );
-
-        const template = response.data.data.find((t) => t.name === templateName);
-        if (template) {
-            console.log(`Template Name: ${template.name}`);
-            console.log('Expected Format:');
-            template.components.forEach((component) => {
-                console.log(`- Type: ${component.type}`);
-                if (component.parameters) {
-                    console.log('  Parameters:');
-                    component.parameters.forEach((param, index) => {
-                        console.log(`    ${index + 1}. Type: ${param.type}`);
-                    });
-                }
-            });
-        } else {
-            console.error(`Template "${templateName}" not found.`);
-        }
-    } catch (error) {
-        console.error('Error fetching template details:', error.response?.data || error.message);
-    }
-}
-
 // WhatsApp Webhook to receive messages
 app.post(
     '/api/webhook',
@@ -187,37 +155,53 @@ app.post(
 
                         for (const message of messages) {
                             const phoneNumber = normalizePhoneNumber(message.from);
-                            const text = message.text?.body || null;
+                            const text = message.text?.body?.trim() || null;
 
                             console.log(`Received message from ${phoneNumber}: ${text}`);
 
                             let chat = await ChatSession.findOne({ phoneNumber });
                             if (!chat) chat = new ChatSession({ phoneNumber, messages: [] });
 
+                            // Push user's message to chat history
                             chat.messages.push({
                                 sender: 'user',
                                 text,
                                 timestamp: new Date(),
                             });
-
                             await chat.save();
 
-                            const autoReplyTemplate = {
-                                messaging_product: 'whatsapp',
-                                to: phoneNumber,
-                                type: 'template',
-                                template: {
-                                    name: 'nsem_ghana_mit',
-                                    language: { code: 'en' },
-                                },
-                            };
+                            // Check if the user is allowed to chat normally
+                            if (!chat.canChatNormally) {
+                                let reply;
+                                switch (text) {
+                                    case '1':
+                                        reply = "Here is the information on Account Assistance...";
+                                        break;
+                                    case '2':
+                                        reply = "Here are the details about our Services & Pricing...";
+                                        break;
+                                    case '3':
+                                        reply = "You are now connected to a representative. Feel free to chat with us.";
+                                        chat.canChatNormally = true; // Enable normal chat
+                                        await chat.save();
+                                        break;
+                                    default:
+                                        reply =
+                                            "Sorry, I didn't understand that. Please reply with:\n" +
+                                            "1 for Account Assistance\n" +
+                                            "2 for Services & Pricing\n" +
+                                            "3 to Speak to a Representative";
+                                }
 
-                            try {
-                                console.log('Sending auto-reply template:', JSON.stringify(autoReplyTemplate, null, 2));
-
-                                const autoReplyResponse = await axios.post(
+                                // Send reply
+                                await axios.post(
                                     `https://graph.facebook.com/v17.0/${process.env.PHONE_NUMBER_ID}/messages`,
-                                    autoReplyTemplate,
+                                    {
+                                        messaging_product: 'whatsapp',
+                                        to: phoneNumber,
+                                        type: 'text',
+                                        text: { body: reply },
+                                    },
                                     {
                                         headers: {
                                             Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
@@ -226,29 +210,18 @@ app.post(
                                     }
                                 );
 
-                                console.log(`Auto-reply sent successfully to ${phoneNumber}:`, JSON.stringify(autoReplyResponse.data, null, 2));
+                                console.log(`Reply sent to ${phoneNumber}: ${reply}`);
 
                                 chat.messages.push({
                                     sender: 'system',
-                                    text: 'Your auto-reply message here',
+                                    text: reply,
                                     timestamp: new Date(),
                                 });
-
                                 await chat.save();
-                            } catch (error) {
-                                console.error('Error sending auto-reply:', error.message);
-
-                                console.error('Request Payload:', JSON.stringify(autoReplyTemplate, null, 2));
-
-                                if (error.response) {
-                                    console.error('Error Response:', {
-                                        status: error.response.status,
-                                        headers: error.response.headers,
-                                        data: error.response.data,
-                                    });
-                                }
-
-                                await fetchAndLogTemplateDetails('greetings');
+                            } else {
+                                // Normal chat flow
+                                console.log(`User ${phoneNumber} is allowed to chat normally.`);
+                                // Add additional handling for the normal chat flow if needed
                             }
                         }
                     }
