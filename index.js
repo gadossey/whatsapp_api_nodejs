@@ -2,9 +2,11 @@ require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
 const bodyParser = require('body-parser');
+const path = require('path');
 const axios = require('axios');
 const helmet = require('helmet');
 const morgan = require('morgan');
+const { parsePhoneNumberFromString } = require('libphonenumber-js');
 
 // Validate required environment variables
 const requiredEnvVars = ['MONGO_URI', 'PHONE_NUMBER_ID', 'WHATSAPP_TOKEN', 'VERIFY_TOKEN', 'PORT'];
@@ -31,47 +33,32 @@ mongoose
     });
 
 // Chat session schema
-const chatSessionSchema = new mongoose.Schema(
-    {
-        phoneNumber: { type: String, required: true },
-        messages: [
-            {
-                sender: { type: String, enum: ['you', 'system', 'user'], required: true },
-                text: { type: String },
-                mediaUrl: { type: String },
-                timestamp: { type: Date, default: Date.now },
-            },
-        ],
-        status: { type: String, default: 'waiting' }, // Track if agent has accepted
-    },
-    { timestamps: true }
-);
+const chatSessionSchema = new mongoose.Schema({
+    phoneNumber: { type: String, required: true },
+    messages: [
+        {
+            sender: { type: String, enum: ['you', 'system', 'user'], required: true },
+            text: { type: String },
+            mediaUrl: { type: String },
+            timestamp: { type: Date, default: Date.now },
+        },
+    ],
+}, { timestamps: true });
 
 const ChatSession = mongoose.model('ChatSession', chatSessionSchema);
 
-// Utility to normalize phone numbers (Ghana is the default country code)
-const DEFAULT_COUNTRY_CODE = '+233';
+// Utility to normalize phone numbers using libphonenumber-js
+const DEFAULT_COUNTRY_CODE = 'GH'; // Ghana is the default country
 function normalizePhoneNumber(phone) {
     if (!phone) return null;
     phone = phone.trim();
 
-    // If phone starts with a '+', assume it's international
-    if (phone.startsWith('+')) {
-        return phone;
+    const parsedNumber = parsePhoneNumberFromString(phone, DEFAULT_COUNTRY_CODE);
+    if (parsedNumber && parsedNumber.isValid()) {
+        return parsedNumber.format('E.164');
     }
 
-    // If phone starts with the default country code (without the '+')
-    if (phone.startsWith(DEFAULT_COUNTRY_CODE.replace('+', ''))) {
-        return `+${phone}`;
-    }
-
-    // If phone starts with '0', it's likely a local Ghana number, so add the default country code
-    if (phone.startsWith('0')) {
-        return DEFAULT_COUNTRY_CODE + phone.substring(1);
-    }
-
-    // Otherwise, assume it's an international number and prepend the default country code
-    return DEFAULT_COUNTRY_CODE + phone;
+    return null; // If number is invalid, return null
 }
 
 // Middleware for error handling
@@ -81,7 +68,107 @@ function asyncHandler(fn) {
     };
 }
 
-// Route to handle WhatsApp Webhook verification
+// Serve static files
+app.use(express.static(path.join(__dirname, 'public')));
+
+// Route to fetch all chat sessions
+app.get('/api/chats', asyncHandler(async (req, res) => {
+    const chats = await ChatSession.find().sort({ updatedAt: -1 });
+    res.json(chats);
+}));
+
+// Route to fetch a specific chat
+app.get('/api/chat/:phoneNumber', asyncHandler(async (req, res) => {
+    const { phoneNumber } = req.params;
+    const normalizedNumber = normalizePhoneNumber(phoneNumber);
+    if (!normalizedNumber) return res.status(400).json({ message: 'Invalid phone number' });
+
+    const chat = await ChatSession.findOne({ phoneNumber: normalizedNumber });
+    if (!chat) return res.status(404).json({ message: 'Chat not found' });
+
+    chat.messages.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+    res.json(chat);
+}));
+
+// Route to send a message
+app.post('/api/send-message', asyncHandler(async (req, res) => {
+    const { phoneNumber, message, mediaUrl } = req.body;
+    if (!phoneNumber || (!message && !mediaUrl)) {
+        return res.status(400).json({ message: 'Phone number and message or media URL are required' });
+    }
+
+    const normalizedNumber = normalizePhoneNumber(phoneNumber);
+    if (!normalizedNumber) return res.status(400).json({ message: 'Invalid phone number' });
+
+    // Send message via WhatsApp Business API
+    await axios.post(
+        `https://graph.facebook.com/v17.0/${process.env.PHONE_NUMBER_ID}/messages`,
+        {
+            messaging_product: 'whatsapp',
+            to: normalizedNumber,
+            type: mediaUrl ? 'image' : 'text',
+            ...(mediaUrl ? { image: { link: mediaUrl } } : { text: { body: message } }),
+        },
+        {
+            headers: {
+                Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
+                'Content-Type': 'application/json',
+            },
+        }
+    );
+
+    // Save message in DB
+    let chat = await ChatSession.findOne({ phoneNumber: normalizedNumber });
+    if (!chat) chat = new ChatSession({ phoneNumber: normalizedNumber, messages: [] });
+
+    chat.messages.push({
+        sender: 'you',
+        text: message || '',
+        mediaUrl: mediaUrl || null,
+        timestamp: new Date(),
+    });
+    await chat.save();
+
+    res.json({ message: 'Message sent successfully', chat });
+}));
+
+// WhatsApp Webhook to receive messages
+app.post('/api/webhook', asyncHandler(async (req, res) => {
+    const body = req.body;
+
+    if (body.object === 'whatsapp_business_account') {
+        for (const entry of body.entry || []) {
+            for (const change of entry.changes || []) {
+                if (change.field === 'messages' && change.value.messages) {
+                    const messages = change.value.messages;
+
+                    for (const message of messages) {
+                        const phoneNumber = normalizePhoneNumber(message.from);
+                        const text = message.text?.body || null;
+
+                        console.log(`Received message from ${phoneNumber}: ${text}`);
+
+                        let chat = await ChatSession.findOne({ phoneNumber });
+                        if (!chat) chat = new ChatSession({ phoneNumber, messages: [] });
+
+                        // Mark the sender as 'user' for received messages
+                        chat.messages.push({
+                            sender: 'user', // this is the key part
+                            text,
+                            timestamp: new Date(),
+                        });
+                        await chat.save();
+                    }
+                }
+            }
+        }
+        res.status(200).send('EVENT_RECEIVED');
+    } else {
+        res.sendStatus(404);
+    }
+}));
+
+// WhatsApp Webhook verification
 app.get('/api/webhook', (req, res) => {
     const mode = req.query['hub.mode'];
     const token = req.query['hub.verify_token'];
@@ -94,89 +181,48 @@ app.get('/api/webhook', (req, res) => {
     }
 });
 
-// Route to receive messages from WhatsApp
-app.post('/api/webhook', asyncHandler(async (req, res) => {
-    const body = req.body;
-
-    if (body.object === 'whatsapp_business_account') {
-        for (const entry of body.entry || []) {
-            for (const change of entry.changes || []) {
-                if (change.field === 'messages' && change.value.messages) {
-                    const messages = change.value.messages;
-                    for (const message of messages) {
-                        const phoneNumber = normalizePhoneNumber(message.from);
-                        const text = message.text?.body || null;
-
-                        let chat = await ChatSession.findOne({ phoneNumber });
-                        if (!chat) chat = new ChatSession({ phoneNumber, messages: [] });
-
-                        // If user hasn't selected a valid option, send them the initial message again
-                        if (!chat.status || chat.status === 'waiting') {
-                            if (text === '1') {
-                                await sendMessage(phoneNumber, '📋 *Account Assistance*: Please describe your account issue. An agent will follow up soon.');
-                                chat.status = 'awaiting_account_issue';
-                            } else if (text === '2') {
-                                await sendMessage(phoneNumber, '💼 *Services & Pricing*: Please check our website for more details.');
-                            } else if (text === '3') {
-                                await sendMessage(phoneNumber, '⏳ *Please wait*: Your request is being processed. An agent will be with you shortly.');
-                                chat.status = 'waiting_for_agent';
-                            } else {
-                                await sendMessage(phoneNumber, '🚫 *Invalid Selection*: Please reply with one of the following options: 1️⃣ Account Assistance 2️⃣ Services & Pricing 3️⃣ Speak to a Representative');
-                            }
-                        } else if (chat.status === 'awaiting_account_issue') {
-                            if (text) {
-                                await sendMessage(phoneNumber, '🔧 *Account Issue*: We have received your issue. An agent will follow up soon.');
-                                chat.status = 'waiting_for_agent';
-                            }
-                        } else if (chat.status === 'waiting_for_agent') {
-                            if (text === 'accept') {
-                                await sendMessage(phoneNumber, '🎉 *You are now connected with an agent*. How may we assist you?');
-                                chat.status = 'connected_with_agent';
-                            } else if (text === 'end') {
-                                await sendMessage(phoneNumber, '🔴 *Chat has ended*. Thank you for using our service. Please rate your experience.');
-                                chat.status = 'ended';
-                            } else {
-                                await sendMessage(phoneNumber, '⏳ *Please wait*: An agent will be with you shortly.');
-                            }
-                        }
-
-                        chat.messages.push({
-                            sender: 'user',
-                            text,
-                            timestamp: new Date(),
-                        });
-
-                        await chat.save();
-                    }
-                }
-            }
-        }
-        res.status(200).send('EVENT_RECEIVED');
-    } else {
-        res.sendStatus(404);
-    }
-}));
-
-// Send message function to WhatsApp using WhatsApp Business API
-async function sendMessage(phoneNumber, message) {
-    const messagePayload = {
+// Send WhatsApp Interactive Message
+async function sendWhatsAppInteractiveMessage(phoneNumber) {
+    const interactiveMessage = {
         messaging_product: 'whatsapp',
         to: phoneNumber,
-        type: 'text',
-        text: { body: message },
+        type: 'interactive',
+        interactive: {
+            type: 'button',
+            header: { type: 'text', text: 'Afenhyia Pa o! I am Vico, your virtual assistant from MITWORK Customer Care. How may I assist you today?' },
+            body: { text: 'Reply with the number to interact with our agent:' },
+            action: {
+                buttons: [
+                    { type: 'reply', reply: { id: 'account_assistance', title: '1️⃣ Account Assistance' } },
+                    { type: 'reply', reply: { id: 'services_pricing', title: '2️⃣ Services & Pricing' } },
+                    { type: 'reply', reply: { id: 'speak_to_rep', title: '3️⃣ Speak to a Representative' } }
+                ]
+            }
+        }
     };
 
-    await axios.post(
-        `https://graph.facebook.com/v17.0/${process.env.PHONE_NUMBER_ID}/messages`,
-        messagePayload,
-        {
-            headers: {
-                Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
-                'Content-Type': 'application/json',
-            },
-        }
-    );
+    try {
+        const response = await axios.post(
+            `https://graph.facebook.com/v17.0/${process.env.PHONE_NUMBER_ID}/messages`,
+            interactiveMessage,
+            {
+                headers: {
+                    Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
+                    'Content-Type': 'application/json',
+                }
+            }
+        );
+        console.log('Interactive message sent:', response.data);
+    } catch (error) {
+        console.error('Error sending interactive message:', error.response?.data || error.message);
+    }
 }
+
+// Central error handling middleware
+app.use((err, req, res, next) => {
+    console.error(err.stack);
+    res.status(500).json({ message: 'Internal Server Error', error: err.message });
+});
 
 // Start server
 const port = process.env.PORT || 3000;
