@@ -6,6 +6,7 @@ const path = require('path');
 const axios = require('axios');
 const helmet = require('helmet');
 const morgan = require('morgan');
+const { parsePhoneNumberFromString } = require('libphonenumber-js');
 
 // Validate required environment variables
 const requiredEnvVars = ['MONGO_URI', 'PHONE_NUMBER_ID', 'WHATSAPP_TOKEN', 'VERIFY_TOKEN', 'PORT'];
@@ -43,7 +44,7 @@ const chatSessionSchema = new mongoose.Schema(
                 timestamp: { type: Date, default: Date.now },
             },
         ],
-        canChatNormally: { type: Boolean, default: false }, // Added to track normal chat state
+        status: { type: String, enum: ['waiting', 'connected', 'ended'], default: 'waiting' }, // Status for chat flow
     },
     { timestamps: true }
 );
@@ -51,14 +52,22 @@ const chatSessionSchema = new mongoose.Schema(
 const ChatSession = mongoose.model('ChatSession', chatSessionSchema);
 
 // Utility to normalize phone numbers
-const DEFAULT_COUNTRY_CODE = '+233';
+const DEFAULT_COUNTRY_CODE = 'GH'; // ISO Alpha-2 code for Ghana
 function normalizePhoneNumber(phone) {
     if (!phone) return null;
+
     phone = phone.trim();
-    if (phone.startsWith('+')) return phone;
-    if (phone.startsWith(DEFAULT_COUNTRY_CODE.replace('+', ''))) return `+${phone}`;
-    if (phone.startsWith('0')) return DEFAULT_COUNTRY_CODE + phone.substring(1);
-    return DEFAULT_COUNTRY_CODE + phone;
+
+    try {
+        let parsedNumber = parsePhoneNumberFromString(phone, DEFAULT_COUNTRY_CODE);
+        if (parsedNumber && parsedNumber.isValid()) {
+            return parsedNumber.format('E.164');
+        }
+    } catch (error) {
+        console.error(`Error parsing phone number: ${phone}`, error.message);
+    }
+
+    return null; // Return null if the number is invalid
 }
 
 // Middleware for error handling
@@ -155,74 +164,47 @@ app.post(
 
                         for (const message of messages) {
                             const phoneNumber = normalizePhoneNumber(message.from);
-                            const text = message.text?.body?.trim() || null;
-
-                            console.log(`Received message from ${phoneNumber}: ${text}`);
+                            const text = message.text?.body || null;
 
                             let chat = await ChatSession.findOne({ phoneNumber });
                             if (!chat) chat = new ChatSession({ phoneNumber, messages: [] });
 
-                            // Push user's message to chat history
-                            chat.messages.push({
-                                sender: 'user',
-                                text,
-                                timestamp: new Date(),
-                            });
-                            await chat.save();
-
-                            // Check if the user is allowed to chat normally
-                            if (!chat.canChatNormally) {
-                                let reply;
-                                switch (text) {
-                                    case '1':
-                                        reply = "Here is the information on Account Assistance...";
-                                        break;
-                                    case '2':
-                                        reply = "Here are the details about our Services & Pricing...";
-                                        break;
-                                    case '3':
-                                        reply = "You are now connected to a representative. Feel free to chat with us.";
-                                        chat.canChatNormally = true; // Enable normal chat
-                                        await chat.save();
-                                        break;
-                                    default:
-                                        reply =
-                                            "Sorry, I didn't understand that. Please reply with:\n" +
-                                            "1 for Account Assistance\n" +
-                                            "2 for Services & Pricing\n" +
-                                            "3 to Speak to a Representative";
-                                }
-
-                                // Send reply
+                            if (chat.status === 'waiting') {
                                 await axios.post(
                                     `https://graph.facebook.com/v17.0/${process.env.PHONE_NUMBER_ID}/messages`,
                                     {
                                         messaging_product: 'whatsapp',
                                         to: phoneNumber,
-                                        type: 'text',
-                                        text: { body: reply },
+                                        text: {
+                                            body: '⏳ Please wait while we connect you to an agent.',
+                                        },
                                     },
                                     {
                                         headers: {
                                             Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
-                                            'Content-Type': 'application/json',
                                         },
                                     }
                                 );
+                                continue;
+                            }
 
-                                console.log(`Reply sent to ${phoneNumber}: ${reply}`);
-
+                            if (text === 'end') {
+                                chat.status = 'ended';
                                 chat.messages.push({
                                     sender: 'system',
-                                    text: reply,
-                                    timestamp: new Date(),
+                                    text: '✅ Chat has ended. Please rate our agent! 🌟',
                                 });
                                 await chat.save();
-                            } else {
-                                // Normal chat flow
-                                console.log(`User ${phoneNumber} is allowed to chat normally.`);
-                                // Add additional handling for the normal chat flow if needed
+                                continue;
                             }
+
+                            chat.messages.push({
+                                sender: 'user',
+                                text,
+                                timestamp: new Date(),
+                            });
+
+                            await chat.save();
                         }
                     }
                 }
