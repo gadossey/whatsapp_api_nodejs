@@ -2,11 +2,9 @@ require('dotenv').config();
 const express = require('express');
 const mongoose = require('mongoose');
 const bodyParser = require('body-parser');
-const path = require('path');
 const axios = require('axios');
 const helmet = require('helmet');
 const morgan = require('morgan');
-const { parsePhoneNumberFromString } = require('libphonenumber-js');
 
 // Validate required environment variables
 const requiredEnvVars = ['MONGO_URI', 'PHONE_NUMBER_ID', 'WHATSAPP_TOKEN', 'VERIFY_TOKEN', 'PORT'];
@@ -36,6 +34,7 @@ mongoose
 const chatSessionSchema = new mongoose.Schema(
     {
         phoneNumber: { type: String, required: true },
+        status: { type: String, default: 'new' },
         messages: [
             {
                 sender: { type: String, enum: ['you', 'system', 'user'], required: true },
@@ -44,7 +43,6 @@ const chatSessionSchema = new mongoose.Schema(
                 timestamp: { type: Date, default: Date.now },
             },
         ],
-        status: { type: String, enum: ['waiting', 'connected', 'ended'], default: 'waiting' }, // Status for chat flow
     },
     { timestamps: true }
 );
@@ -52,171 +50,87 @@ const chatSessionSchema = new mongoose.Schema(
 const ChatSession = mongoose.model('ChatSession', chatSessionSchema);
 
 // Utility to normalize phone numbers
-const DEFAULT_COUNTRY_CODE = 'GH'; // ISO Alpha-2 code for Ghana
+const DEFAULT_COUNTRY_CODE = '+233';
 function normalizePhoneNumber(phone) {
     if (!phone) return null;
-
     phone = phone.trim();
-
-    try {
-        let parsedNumber = parsePhoneNumberFromString(phone, DEFAULT_COUNTRY_CODE);
-        if (parsedNumber && parsedNumber.isValid()) {
-            return parsedNumber.format('E.164');
-        }
-    } catch (error) {
-        console.error(`Error parsing phone number: ${phone}`, error.message);
-    }
-
-    return null; // Return null if the number is invalid
+    if (phone.startsWith('+')) return phone;
+    if (phone.startsWith(DEFAULT_COUNTRY_CODE.replace('+', ''))) return `+${phone}`;
+    if (phone.startsWith('0')) return DEFAULT_COUNTRY_CODE + phone.substring(1);
+    return DEFAULT_COUNTRY_CODE + phone;
 }
 
-// Middleware for error handling
-function asyncHandler(fn) {
-    return (req, res, next) => {
-        Promise.resolve(fn(req, res, next)).catch(next);
+// Utility to send a message via WhatsApp API
+async function sendMessage(phoneNumber, message) {
+    const payload = {
+        messaging_product: 'whatsapp',
+        to: phoneNumber,
+        text: { body: message },
     };
+
+    await axios.post(
+        `https://graph.facebook.com/v17.0/${process.env.PHONE_NUMBER_ID}/messages`,
+        payload,
+        {
+            headers: {
+                Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
+                'Content-Type': 'application/json',
+            },
+        }
+    );
 }
 
-// Serve static files
-app.use(express.static(path.join(__dirname, 'public')));
+// Route to handle incoming webhook
+app.post('/api/webhook', async (req, res) => {
+    const body = req.body;
 
-// Route to fetch all chat sessions
-app.get(
-    '/api/chats',
-    asyncHandler(async (req, res) => {
-        const chats = await ChatSession.find().sort({ updatedAt: -1 });
-        res.json(chats);
-    })
-);
+    if (body.object === 'whatsapp_business_account') {
+        for (const entry of body.entry || []) {
+            for (const change of entry.changes || []) {
+                if (change.field === 'messages' && change.value.messages) {
+                    const messages = change.value.messages;
 
-// Route to fetch a specific chat
-app.get(
-    '/api/chat/:phoneNumber',
-    asyncHandler(async (req, res) => {
-        const { phoneNumber } = req.params;
-        const normalizedNumber = normalizePhoneNumber(phoneNumber);
-        if (!normalizedNumber) return res.status(400).json({ message: 'Invalid phone number' });
+                    for (const message of messages) {
+                        const phoneNumber = normalizePhoneNumber(message.from);
+                        const text = message.text?.body || null;
 
-        const chat = await ChatSession.findOne({ phoneNumber: normalizedNumber });
-        if (!chat) return res.status(404).json({ message: 'Chat not found' });
+                        let chat = await ChatSession.findOne({ phoneNumber });
+                        if (!chat) chat = new ChatSession({ phoneNumber, messages: [] });
 
-        chat.messages.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-        res.json(chat);
-    })
-);
-
-// Route to send a message
-app.post(
-    '/api/send-message',
-    asyncHandler(async (req, res) => {
-        const { phoneNumber, message, mediaUrl } = req.body;
-        if (!phoneNumber || (!message && !mediaUrl)) {
-            return res.status(400).json({ message: 'Phone number and message or media URL are required' });
-        }
-
-        const normalizedNumber = normalizePhoneNumber(phoneNumber);
-        if (!normalizedNumber) return res.status(400).json({ message: 'Invalid phone number' });
-
-        // Send message via WhatsApp Business API
-        await axios.post(
-            `https://graph.facebook.com/v17.0/${process.env.PHONE_NUMBER_ID}/messages`,
-            {
-                messaging_product: 'whatsapp',
-                to: normalizedNumber,
-                type: mediaUrl ? 'image' : 'text',
-                ...(mediaUrl ? { image: { link: mediaUrl } } : { text: { body: message } }),
-            },
-            {
-                headers: {
-                    Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
-                    'Content-Type': 'application/json',
-                },
-            }
-        );
-
-        // Save message in DB
-        let chat = await ChatSession.findOne({ phoneNumber: normalizedNumber });
-        if (!chat) chat = new ChatSession({ phoneNumber: normalizedNumber, messages: [] });
-
-        chat.messages.push({
-            sender: 'you',
-            text: message || '',
-            mediaUrl: mediaUrl || null,
-            timestamp: new Date(),
-        });
-        await chat.save();
-
-        res.json({ message: 'Message sent successfully', chat });
-    })
-);
-
-// WhatsApp Webhook to receive messages
-app.post(
-    '/api/webhook',
-    asyncHandler(async (req, res) => {
-        const body = req.body;
-
-        if (body.object === 'whatsapp_business_account') {
-            for (const entry of body.entry || []) {
-                for (const change of entry.changes || []) {
-                    if (change.field === 'messages' && change.value.messages) {
-                        const messages = change.value.messages;
-
-                        for (const message of messages) {
-                            const phoneNumber = normalizePhoneNumber(message.from);
-                            const text = message.text?.body || null;
-
-                            let chat = await ChatSession.findOne({ phoneNumber });
-                            if (!chat) chat = new ChatSession({ phoneNumber, messages: [] });
-
-                            if (chat.status === 'waiting') {
-                                await axios.post(
-                                    `https://graph.facebook.com/v17.0/${process.env.PHONE_NUMBER_ID}/messages`,
-                                    {
-                                        messaging_product: 'whatsapp',
-                                        to: phoneNumber,
-                                        text: {
-                                            body: '⏳ Please wait while we connect you to an agent.',
-                                        },
-                                    },
-                                    {
-                                        headers: {
-                                            Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
-                                        },
-                                    }
-                                );
-                                continue;
+                        // Handle different message replies
+                        if (text === '1' || text === '2' || text === '3') {
+                            // If account assistance
+                            if (text === '1') {
+                                await handleAccountAssistance(phoneNumber, chat);
+                            } else if (text === '2') {
+                                await sendMessage(phoneNumber, '💼 *Services & Pricing*: Please check our website for details.');
+                            } else if (text === '3') {
+                                await connectToAgent(phoneNumber, chat);
                             }
-
-                            if (text === 'end') {
-                                chat.status = 'ended';
-                                chat.messages.push({
-                                    sender: 'system',
-                                    text: '✅ Chat has ended. Please rate our agent! 🌟',
-                                });
-                                await chat.save();
-                                continue;
-                            }
-
-                            chat.messages.push({
-                                sender: 'user',
-                                text,
-                                timestamp: new Date(),
-                            });
-
-                            await chat.save();
+                        } else if (['1️⃣', '2️⃣', '3️⃣'].includes(text)) {
+                            await handleAccountAssistance(phoneNumber, chat);
+                        } else {
+                            await sendMessage(phoneNumber, '🚫 *Invalid Selection*: Please reply with one of the following options: 1️⃣ Account Assistance 2️⃣ Services & Pricing 3️⃣ Speak to a Representative');
                         }
+
+                        chat.messages.push({
+                            sender: 'user',
+                            text,
+                            timestamp: new Date(),
+                        });
+
+                        await chat.save();
                     }
                 }
             }
-            res.status(200).send('EVENT_RECEIVED');
-        } else {
-            res.sendStatus(404);
         }
-    })
-);
+        res.status(200).send('EVENT_RECEIVED');
+    } else {
+        res.sendStatus(404);
+    }
+});
 
-// WhatsApp Webhook verification
+// Route to verify the webhook
 app.get('/api/webhook', (req, res) => {
     const mode = req.query['hub.mode'];
     const token = req.query['hub.verify_token'];
@@ -229,13 +143,141 @@ app.get('/api/webhook', (req, res) => {
     }
 });
 
-// Central error handling middleware
-app.use((err, req, res, next) => {
-    console.error(err.stack);
-    res.status(500).json({ message: 'Internal Server Error', error: err.message });
-});
+// Send the initial welcome message with options
+async function sendWelcomeMessage(phoneNumber) {
+    const message = `
+    👋 *Afenhyia Pa o!*
 
-// Start server
+    I am Vico, your virtual assistant from MITWORK Customer Care.  
+    How may I assist you today?  
+    Reply with the number to interact with our agent:  
+
+    1️⃣ *Account Assistance*  
+    2️⃣ *Services & Pricing*  
+    3️⃣ *Speak to a Representative`;
+
+    const buttonPayload = {
+        messaging_product: 'whatsapp',
+        to: phoneNumber,
+        type: 'interactive',
+        interactive: {
+            type: 'button',
+            body: { text: message },
+            action: {
+                buttons: [
+                    { type: 'reply', reply: { id: '1', title: 'Account Assistance' } },
+                    { type: 'reply', reply: { id: '2', title: 'Services & Pricing' } },
+                    { type: 'reply', reply: { id: '3', title: 'Speak to a Representative' } },
+                ],
+            },
+        },
+    };
+
+    await axios.post(
+        `https://graph.facebook.com/v17.0/${process.env.PHONE_NUMBER_ID}/messages`,
+        buttonPayload,
+        {
+            headers: {
+                Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
+                'Content-Type': 'application/json',
+            },
+        }
+    );
+}
+
+// Handle Account Assistance selection
+async function handleAccountAssistance(phoneNumber, chat) {
+    const message = `
+    🛠️ *Account Assistance*: Please describe your account issue. An agent will follow up soon.
+
+    *Please select the platform you're having an issue with:*
+    
+    1️⃣ NSEM.COM.GH  
+    2️⃣ ENAG SAFETY SOLUTIONS  
+    3️⃣ SIRECORD AUDIO MONITORING PLATFORM`;
+
+    const buttonPayload = {
+        messaging_product: 'whatsapp',
+        to: phoneNumber,
+        type: 'interactive',
+        interactive: {
+            type: 'button',
+            body: { text: message },
+            action: {
+                buttons: [
+                    { type: 'reply', reply: { id: '1', title: 'NSEM.COM.GH' } },
+                    { type: 'reply', reply: { id: '2', title: 'ENAG SAFETY SOLUTIONS' } },
+                    { type: 'reply', reply: { id: '3', title: 'SIRECORD AUDIO MONITORING PLATFORM' } },
+                ],
+            },
+        },
+    };
+
+    await axios.post(
+        `https://graph.facebook.com/v17.0/${process.env.PHONE_NUMBER_ID}/messages`,
+        buttonPayload,
+        {
+            headers: {
+                Authorization: `Bearer ${process.env.WHATSAPP_TOKEN}`,
+                'Content-Type': 'application/json',
+            },
+        }
+    );
+}
+
+// Handle platform selection and issue description
+async function handlePlatformSelection(phoneNumber, selectedPlatform, chat) {
+    let responseMessage;
+
+    switch (selectedPlatform) {
+        case '1':
+            responseMessage = `⚙️ You have selected *NSEM.COM.GH*. Please describe the issue you are facing.`;
+            break;
+        case '2':
+            responseMessage = `⚙️ You have selected *ENAG SAFETY SOLUTIONS*. Please describe the issue you are facing.`;
+            break;
+        case '3':
+            responseMessage = `⚙️ You have selected *SIRECORD AUDIO MONITORING PLATFORM*. Please describe the issue you are facing.`;
+            break;
+        default:
+            responseMessage = `🚫 *Invalid Selection*: Please reply with one of the following options:
+            1️⃣ NSEM.COM.GH  
+            2️⃣ ENAG SAFETY SOLUTIONS  
+            3️⃣ SIRECORD AUDIO MONITORING PLATFORM`;
+            break;
+    }
+
+    chat.messages.push({
+        sender: 'system',
+        text: responseMessage,
+        timestamp: new Date(),
+    });
+    await chat.save();
+
+    await sendMessage(phoneNumber, responseMessage);
+}
+
+// Connect user to an agent
+async function connectToAgent(phoneNumber, chat) {
+    const responseMessage = `🗣️ You are now connected with an Agent. Please describe your issue to the agent.`;
+
+    chat.status = 'connected';
+    await chat.save();
+
+    await sendMessage(phoneNumber, responseMessage);
+}
+
+// End chat and inform user
+async function endChat(phoneNumber, chat) {
+    const responseMessage = `❌ Your chat has ended. Thank you for reaching out! If you need further assistance, feel free to contact us again.`;
+
+    chat.status = 'ended';
+    await chat.save();
+
+    await sendMessage(phoneNumber, responseMessage);
+}
+
+// Start the server
 const port = process.env.PORT || 3000;
 app.listen(port, () => {
     console.log(`Server running at http://localhost:${port}`);
